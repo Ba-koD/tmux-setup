@@ -4,9 +4,11 @@ Personal tmux setup copied from my server workflow:
 
 - tmux config with mouse support
 - default `Ctrl+B` prefix
+- visible `Ctrl+B` prefix in the normal status line
 - zellij-style prefix hint in the status line
 - `Ctrl+B ?` key binding popup
 - interactive shell session picker on login
+- GitHub tag/release based version check
 - `tx`, `txl`, `txn`, and `codext` helper commands
 
 ## Install
@@ -15,15 +17,26 @@ Personal tmux setup copied from my server workflow:
 curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash
 ```
 
+The installer prints the local, latest, and bundled versions on every run, then
+asks whether to install, update, or reinstall. In non-interactive shells it uses
+the default answer and continues.
+
 If tmux is already installed and you only want the config:
 
 ```sh
 curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash -s -- --skip-package-install
 ```
 
+Install a specific GitHub tag:
+
+```sh
+curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.2.0/install.sh | bash
+```
+
 The installer writes:
 
 ```txt
+${XDG_CONFIG_HOME:-~/.config}/tmux-setup/version
 ${XDG_CONFIG_HOME:-~/.config}/tmux/personal.tmux.conf
 ${XDG_CONFIG_HOME:-~/.config}/tmux-launcher/launcher.sh
 ```
@@ -62,6 +75,15 @@ To install only tmux config without shell auto-launch:
 curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash -s -- --no-shell-launcher
 ```
 
+Useful installer options:
+
+```sh
+--version           # print local/latest/bundled versions
+--yes               # accept default prompts
+--no-update-check   # skip GitHub version check
+--uninstall         # remove managed files and shell blocks
+```
+
 ## Usage
 
 Open a new interactive shell. The launcher shows existing tmux sessions first.
@@ -83,6 +105,9 @@ Ctrl+B ?
 Press `Ctrl+B` once to show the common key hints directly in the status line.
 tmux cannot detect a bare `Ctrl` key press by itself, so this is the closest
 portable behavior to zellij's key hint mode.
+
+When the prefix is not active, the normal status line still shows `Ctrl+B` so
+the prefix is visible by default.
 
 The prefix hint includes common actions such as new window, splits, pane
 movement, resize, zoom, window navigation, session/window tree, copy mode,

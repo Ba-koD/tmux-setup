@@ -3,12 +3,16 @@ set -euo pipefail
 IFS=$'\n\t'
 
 PROJECT_NAME="tmux-setup"
+INSTALLER_VERSION="v0.2.0"
+GITHUB_OWNER="Ba-koD"
+GITHUB_REPO="tmux-setup"
 MARKER_BEGIN="# >>> managed-by:${PROJECT_NAME} >>>"
 MARKER_END="# <<< managed-by:${PROJECT_NAME} <<<"
 LAUNCHER_MARKER_BEGIN="# >>> tmux session launcher >>>"
 LAUNCHER_MARKER_END="# <<< tmux session launcher <<<"
 CONFIG_NAME="personal.tmux.conf"
 LAUNCHER_NAME="launcher.sh"
+ORIGINAL_ARGS=("$@")
 
 die() {
   printf 'tmux-setup: %s\n' "$*" >&2
@@ -22,11 +26,14 @@ info() {
 usage() {
   cat <<EOF
 Usage:
-  install.sh [--skip-package-install] [--no-shell-launcher] [--uninstall]
+  install.sh [--skip-package-install] [--no-shell-launcher] [--no-update-check] [--yes] [--uninstall]
 
 Options:
   --skip-package-install  Do not install tmux automatically when it is missing
   --no-shell-launcher     Do not add the interactive shell session launcher
+  --no-update-check       Do not check GitHub release/tag versions
+  -y, --yes               Use default yes for install/update prompts
+  --version               Show bundled, local, and latest versions
   --uninstall             Remove the managed tmux config block and config file
   -h, --help              Show this help
 
@@ -39,8 +46,51 @@ After install:
 EOF
 }
 
+github_raw_url() {
+  local ref="$1"
+  printf 'https://github.com/%s/%s/raw/%s/install.sh\n' "$GITHUB_OWNER" "$GITHUB_REPO" "$ref"
+}
+
 tmux_quote() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+version_number() {
+  local value="$1"
+  value="${value#v}"
+  value="${value%%[-+]*}"
+  printf '%s\n' "$value"
+}
+
+numeric_part() {
+  case "${1:-}" in
+    ""|*[!0-9]*) printf '0\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+version_gt() {
+  local newer older
+  local newer_major newer_minor newer_patch older_major older_minor older_patch
+
+  newer="$(version_number "$1")"
+  older="$(version_number "$2")"
+
+  IFS=. read -r newer_major newer_minor newer_patch _ <<<"$newer"
+  IFS=. read -r older_major older_minor older_patch _ <<<"$older"
+
+  newer_major="$(numeric_part "$newer_major")"
+  newer_minor="$(numeric_part "$newer_minor")"
+  newer_patch="$(numeric_part "$newer_patch")"
+  older_major="$(numeric_part "$older_major")"
+  older_minor="$(numeric_part "$older_minor")"
+  older_patch="$(numeric_part "$older_patch")"
+
+  (( 10#$newer_major > 10#$older_major )) && return 0
+  (( 10#$newer_major < 10#$older_major )) && return 1
+  (( 10#$newer_minor > 10#$older_minor )) && return 0
+  (( 10#$newer_minor < 10#$older_minor )) && return 1
+  (( 10#$newer_patch > 10#$older_patch ))
 }
 
 version_at_least() {
@@ -66,6 +116,135 @@ version_at_least() {
 
 tmux_version() {
   tmux -V 2>/dev/null | awk '{print $2}'
+}
+
+latest_github_version() {
+  local latest=""
+  local release_url="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest"
+  local tags_url="https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/tags"
+
+  if command -v curl >/dev/null 2>&1; then
+    latest="$(
+      curl -fsSL -H 'Accept: application/vnd.github+json' "$release_url" 2>/dev/null |
+        sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        head -n 1 ||
+        true
+    )"
+    if [[ -z "$latest" ]]; then
+      latest="$(
+        curl -fsSL -H 'Accept: application/vnd.github+json' "$tags_url" 2>/dev/null |
+          sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+          head -n 1 ||
+          true
+      )"
+    fi
+  fi
+
+  if [[ -z "$latest" ]] && command -v git >/dev/null 2>&1; then
+    latest="$(
+      git ls-remote --tags --refs "https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}.git" 'v*' 2>/dev/null |
+        awk -F/ '{ print $NF }' |
+        sort -V 2>/dev/null |
+        tail -n 1 ||
+        true
+    )"
+  fi
+
+  printf '%s\n' "${latest:-$INSTALLER_VERSION}"
+}
+
+installed_version() {
+  local version_file="$1"
+
+  if [[ -s "$version_file" ]]; then
+    sed -n '1p' "$version_file"
+  else
+    printf 'not installed\n'
+  fi
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local default_yes="$2"
+  local answer
+  local suffix
+
+  if [[ "$default_yes" -eq 1 ]]; then
+    suffix='[Y/n]'
+  else
+    suffix='[y/N]'
+  fi
+
+  if ! { true </dev/tty >/dev/tty; } 2>/dev/null; then
+    [[ "$default_yes" -eq 1 ]]
+    return
+  fi
+
+  printf '%s %s ' "$prompt" "$suffix" >/dev/tty
+  IFS= read -r answer </dev/tty || answer=""
+
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    n|N|no|NO) return 1 ;;
+    "") [[ "$default_yes" -eq 1 ]] ;;
+    *) return 1 ;;
+  esac
+}
+
+reexec_latest_installer() {
+  local latest="$1"
+  local url
+  local args=()
+  local arg
+
+  command -v curl >/dev/null 2>&1 || die "curl is required to update from GitHub tag ${latest}"
+
+  for arg in "${ORIGINAL_ARGS[@]}"; do
+    [[ "$arg" == "--no-update-check" ]] && continue
+    args+=("$arg")
+  done
+  args+=("--no-update-check")
+
+  url="$(github_raw_url "$latest")"
+  info "Fetching tmux-setup ${latest}: ${url}"
+  curl -fsSL "$url" | bash -s -- "${args[@]}"
+  exit $?
+}
+
+version_prompt() {
+  local version_file="$1"
+  local assume_yes="$2"
+  local current latest
+
+  current="$(installed_version "$version_file")"
+  latest="$(latest_github_version)"
+
+  info "tmux-setup local: ${current}"
+  info "tmux-setup latest: ${latest}"
+  info "tmux-setup bundled: ${INSTALLER_VERSION}"
+
+  if version_gt "$latest" "$INSTALLER_VERSION"; then
+    if [[ "$assume_yes" -eq 1 ]] || prompt_yes_no "Update installer to ${latest} now?" 1; then
+      reexec_latest_installer "$latest"
+    fi
+    info "Update skipped"
+    exit 0
+  fi
+
+  if [[ "$current" == "$INSTALLER_VERSION" ]]; then
+    if [[ "$assume_yes" -eq 1 ]] || prompt_yes_no "Already on ${current}. Reinstall config now?" 0; then
+      return 0
+    fi
+    info "No changes applied"
+    exit 0
+  fi
+
+  if [[ "$assume_yes" -eq 1 ]] || prompt_yes_no "Install/update local config to ${INSTALLER_VERSION} now?" 1; then
+    return 0
+  fi
+
+  info "No changes applied"
+  exit 0
 }
 
 install_tmux_package() {
@@ -127,7 +306,7 @@ set-option -g status-interval 1
 set-option -g status-style "bg=colour235,fg=colour250"
 set-option -g status-left-length 240
 set-option -g status-right-length 80
-set-option -g status-left "#{?client_prefix,#[reverse] Ctrl+B #[noreverse] c:new  |/-:split  h/j/k/l:move  H/J/K/L:resize  z:zoom  x:kill  n/p:win  0-9:goto  w:tree  s:sessions  [:copy  ]:paste  q:panes  Spc:layout  d:detach  r:reload  ?:all , #S }"
+set-option -g status-left "#{?client_prefix,#[reverse] Ctrl+B #[noreverse] c:new  |/-:split  h/j/k/l:move  H/J/K/L:resize  z:zoom  x:kill  n/p:win  0-9:goto  w:tree  s:sessions  [:copy  ]:paste  q:panes  Spc:layout  d:detach  r:reload  ?:all ,#[bold] Ctrl+B #[nobold] #S }"
 set-option -g status-right "#{?client_prefix,, %Y-%m-%d %H:%M }"
 set-window-option -g window-status-current-style "bg=colour37,fg=colour16"
 set-option -g pane-border-style "fg=colour238"
@@ -505,8 +684,11 @@ remove_shell_launcher_blocks() {
 main() {
   local skip_package_install=0
   local install_shell_launcher=1
+  local check_updates=1
+  local assume_yes=0
+  local show_version=0
   local uninstall=0
-  local config_home config_dir launcher_dir managed_conf launcher_file tmux_conf installed_version supports_popup
+  local config_home state_dir config_dir launcher_dir managed_conf launcher_file version_file tmux_conf installed_version supports_popup
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -515,6 +697,15 @@ main() {
         ;;
       --no-shell-launcher)
         install_shell_launcher=0
+        ;;
+      --no-update-check)
+        check_updates=0
+        ;;
+      -y|--yes)
+        assume_yes=1
+        ;;
+      --version)
+        show_version=1
         ;;
       --uninstall)
         uninstall=1
@@ -531,20 +722,35 @@ main() {
   done
 
   config_home="${XDG_CONFIG_HOME:-${HOME}/.config}"
+  state_dir="${config_home}/${PROJECT_NAME}"
   config_dir="${config_home}/tmux"
   launcher_dir="${config_home}/tmux-launcher"
   managed_conf="${config_dir}/${CONFIG_NAME}"
   launcher_file="${launcher_dir}/${LAUNCHER_NAME}"
+  version_file="${state_dir}/version"
   tmux_conf="${HOME}/.tmux.conf"
+
+  if [[ "$show_version" -eq 1 ]]; then
+    info "tmux-setup local: $(installed_version "$version_file")"
+    info "tmux-setup latest: $(latest_github_version)"
+    info "tmux-setup bundled: ${INSTALLER_VERSION}"
+    return
+  fi
 
   if [[ "$uninstall" -eq 1 ]]; then
     remove_managed_block "$tmux_conf"
     remove_shell_launcher_blocks
     rm -f "$managed_conf"
     rm -f "$launcher_file"
+    rm -f "$version_file"
     rmdir "$launcher_dir" 2>/dev/null || true
+    rmdir "$state_dir" 2>/dev/null || true
     info "Removed managed tmux setup"
     return
+  fi
+
+  if [[ "$check_updates" -eq 1 ]]; then
+    version_prompt "$version_file" "$assume_yes"
   fi
 
   install_tmux_package "$skip_package_install"
@@ -557,6 +763,7 @@ main() {
     info "tmux ${installed_version} does not support display-popup; using built-in list-keys"
   fi
 
+  install -d -m 0755 "$state_dir"
   install -d -m 0755 "$config_dir"
   install -d -m 0755 "$launcher_dir"
   write_tmux_config "$managed_conf" "$supports_popup"
@@ -565,12 +772,14 @@ main() {
   if [[ "$install_shell_launcher" -eq 1 ]]; then
     install_shell_launcher_blocks
   fi
+  printf '%s\n' "$INSTALLER_VERSION" >"$version_file"
 
   if [[ -n "${TMUX:-}" ]]; then
     tmux source-file "$tmux_conf"
     info "Reloaded active tmux session"
   fi
 
+  info "Installed tmux setup version: ${INSTALLER_VERSION}"
   info "Installed tmux config: ${managed_conf}"
   info "Installed tmux launcher: ${launcher_file}"
   info "Prefix key: Ctrl+B"
