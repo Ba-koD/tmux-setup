@@ -12,13 +12,13 @@ Personal tmux setup copied from my server workflow:
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/refs/heads/main/install.sh | bash
 ```
 
 If tmux is already installed and you only want the config:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/main/install.sh | bash -s -- --skip-package-install
+curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/refs/heads/main/install.sh | bash -s -- --skip-package-install
 ```
 
 The installer writes:
@@ -59,7 +59,7 @@ esac
 To install only tmux config without shell auto-launch:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/main/install.sh | bash -s -- --no-shell-launcher
+curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/refs/heads/main/install.sh | bash -s -- --no-shell-launcher
 ```
 
 ## Usage
@@ -109,5 +109,5 @@ NO_TMUX=1 bash
 ## Uninstall
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/main/install.sh | bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/refs/heads/main/install.sh | bash -s -- --uninstall
 ```
