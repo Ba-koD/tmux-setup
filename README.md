@@ -84,6 +84,10 @@ Press `Ctrl+B` once to show the common key hints directly in the status line.
 tmux cannot detect a bare `Ctrl` key press by itself, so this is the closest
 portable behavior to zellij's key hint mode.
 
+The prefix hint includes common actions such as new window, splits, pane
+movement, resize, zoom, window navigation, session/window tree, copy mode,
+paste, pane numbers, layout cycling, detach, reload, and the full key popup.
+
 Reload the config from inside tmux:
 
 ```txt
