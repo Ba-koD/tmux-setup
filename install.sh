@@ -31,7 +31,7 @@ Options:
   -h, --help              Show this help
 
 Install:
-  curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/refs/heads/main/install.sh | bash
+  curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash
 
 After install:
   Open a new interactive shell
