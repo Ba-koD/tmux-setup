@@ -4,6 +4,7 @@ Personal tmux setup copied from my server workflow:
 
 - tmux config with mouse support
 - default `Ctrl+B` prefix
+- zellij-style prefix hint in the status line
 - `Ctrl+B ?` key binding popup
 - interactive shell session picker on login
 - `tx`, `txl`, `txn`, and `codext` helper commands
@@ -78,6 +79,10 @@ Open the key bindings popup:
 ```txt
 Ctrl+B ?
 ```
+
+Press `Ctrl+B` once to show the common key hints directly in the status line.
+tmux cannot detect a bare `Ctrl` key press by itself, so this is the closest
+portable behavior to zellij's key hint mode.
 
 Reload the config from inside tmux:
 

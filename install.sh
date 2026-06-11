@@ -123,10 +123,12 @@ set-window-option -g mode-keys vi
 set-option -g escape-time 10
 set-option -g detach-on-destroy off
 
-set-option -g status-interval 5
+set-option -g status-interval 1
 set-option -g status-style "bg=colour235,fg=colour250"
-set-option -g status-left " #S "
-set-option -g status-right " %Y-%m-%d %H:%M "
+set-option -g status-left-length 180
+set-option -g status-right-length 80
+set-option -g status-left "#{?client_prefix,#[reverse] Ctrl+B #[noreverse] c:new  |:split  -:split  h/j/k/l:move  H/J/K/L:resize  x:kill  d:detach  r:reload  ?:keys , #S }"
+set-option -g status-right "#{?client_prefix,, %Y-%m-%d %H:%M }"
 set-window-option -g window-status-current-style "bg=colour37,fg=colour16"
 set-option -g pane-border-style "fg=colour238"
 set-option -g pane-active-border-style "fg=colour37"
