@@ -8,6 +8,7 @@ Personal tmux setup copied from my server workflow:
 - zellij-style prefix hint in the status line with width-aware levels
 - `Ctrl+B ?` key binding popup
 - interactive shell session picker on login
+- login-time update check before the session picker
 - GitHub tag/release based version check
 - `tx`, `txl`, `txn`, and `codext` helper commands
 
@@ -30,7 +31,7 @@ curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash -s --
 Install a specific GitHub tag:
 
 ```sh
-curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.3.0/install.sh | bash
+curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.4.0/install.sh | bash
 ```
 
 The installer writes:
@@ -90,7 +91,14 @@ Open a new interactive shell. The launcher shows existing tmux sessions first.
 If `fzf` is installed, it uses an fzf menu. Otherwise, it falls back to a
 numbered prompt.
 
+Before the session picker, the launcher checks GitHub releases and prints the
+local/latest tmux-setup versions. If a newer tag exists, it asks whether to
+update immediately.
+
 ```txt
+tmux-setup local: v0.4.0
+tmux-setup latest: v0.4.0
+tmux-setup is up to date
 tmux session> 
 [new session]
 [native shell]
@@ -135,6 +143,13 @@ Skip the automatic launcher for one shell:
 ```sh
 NO_TMUX=1 zsh
 NO_TMUX=1 bash
+```
+
+Skip only the login-time update check:
+
+```sh
+NO_TMUX_UPDATE=1 zsh
+NO_TMUX_UPDATE=1 bash
 ```
 
 ## Uninstall

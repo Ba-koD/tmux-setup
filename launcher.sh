@@ -1,5 +1,9 @@
 # shellcheck shell=sh
 
+_tmux_setup_version="v0.4.0"
+_tmux_setup_owner="Ba-koD"
+_tmux_setup_repo="tmux-setup"
+
 _tmux_launcher_bin_dir="${TMUX_LAUNCHER_BIN_DIR:-$HOME/.local/bin}"
 if [ -d "$_tmux_launcher_bin_dir" ]; then
   case ":${PATH:-}:" in
@@ -10,6 +14,123 @@ fi
 
 _tmux_launcher_mktemp() {
   mktemp "${TMPDIR:-/tmp}/tmux-launcher.XXXXXX" 2>/dev/null || mktemp -t tmux-launcher 2>/dev/null
+}
+
+_tmux_setup_version_file() {
+  printf '%s/tmux-setup/version\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+
+_tmux_setup_installed_version() {
+  _tmx_setup_version_file=$(_tmux_setup_version_file)
+  if [ -s "$_tmx_setup_version_file" ]; then
+    sed -n '1p' "$_tmx_setup_version_file"
+  else
+    printf 'not installed\n'
+  fi
+}
+
+_tmux_setup_version_number() {
+  _tmx_setup_value=$1
+  _tmx_setup_value=${_tmx_setup_value#v}
+  _tmx_setup_value=${_tmx_setup_value%%[-+]*}
+  printf '%s\n' "$_tmx_setup_value"
+}
+
+_tmux_setup_version_gt() {
+  _tmx_setup_newer=$(_tmux_setup_version_number "$1")
+  _tmx_setup_older=$(_tmux_setup_version_number "$2")
+  awk -v newer="$_tmx_setup_newer" -v older="$_tmx_setup_older" '
+    BEGIN {
+      split(newer, n, ".")
+      split(older, o, ".")
+      for (i = 1; i <= 3; i++) {
+        n[i] += 0
+        o[i] += 0
+        if (n[i] > o[i]) exit 0
+        if (n[i] < o[i]) exit 1
+      }
+      exit 1
+    }
+  '
+}
+
+_tmux_setup_latest_version() {
+  _tmx_setup_latest=""
+  _tmx_setup_release_url="https://api.github.com/repos/${_tmux_setup_owner}/${_tmux_setup_repo}/releases/latest"
+  _tmx_setup_tags_url="https://api.github.com/repos/${_tmux_setup_owner}/${_tmux_setup_repo}/tags"
+
+  if command -v curl >/dev/null 2>&1; then
+    _tmx_setup_latest=$(
+      curl -fsSL -H 'Accept: application/vnd.github+json' "$_tmx_setup_release_url" 2>/dev/null |
+        sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+        head -n 1
+    ) || _tmx_setup_latest=""
+    if [ -z "$_tmx_setup_latest" ]; then
+      _tmx_setup_latest=$(
+        curl -fsSL -H 'Accept: application/vnd.github+json' "$_tmx_setup_tags_url" 2>/dev/null |
+          sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+          head -n 1
+      ) || _tmx_setup_latest=""
+    fi
+  fi
+
+  printf '%s\n' "${_tmx_setup_latest:-$_tmux_setup_version}"
+}
+
+_tmux_setup_prompt_update() {
+  _tmx_setup_prompt=$1
+  _tmx_setup_answer=""
+
+  if ! { : </dev/tty >/dev/tty; } 2>/dev/null; then
+    return 1
+  fi
+
+  printf '%s [y/N] ' "$_tmx_setup_prompt" >/dev/tty
+  IFS= read -r _tmx_setup_answer </dev/tty || _tmx_setup_answer=""
+
+  case $_tmx_setup_answer in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_tmux_setup_run_update() {
+  _tmx_setup_latest=$1
+  _tmx_setup_url="https://github.com/${_tmux_setup_owner}/${_tmux_setup_repo}/raw/${_tmx_setup_latest}/install.sh"
+
+  if ! command -v curl >/dev/null 2>&1; then
+    printf 'tmux-setup update requires curl\n'
+    return 0
+  fi
+
+  printf 'Updating tmux-setup to %s...\n' "$_tmx_setup_latest"
+  curl -fsSL "$_tmx_setup_url" | bash -s -- --skip-package-install --yes --no-update-check
+}
+
+_tmux_setup_check_update() {
+  [ -z "${NO_TMUX_UPDATE:-}" ] || return 0
+  [ -z "${_TMUX_SETUP_UPDATE_CHECKED:-}" ] || return 0
+  _tmux_launcher_interactive_tty || return 0
+  _tmux_launcher_in_tmux && return 0
+
+  _TMUX_SETUP_UPDATE_CHECKED=1
+  export _TMUX_SETUP_UPDATE_CHECKED
+
+  _tmx_setup_current=$(_tmux_setup_installed_version)
+  _tmx_setup_latest=$(_tmux_setup_latest_version)
+
+  printf 'tmux-setup local: %s\n' "$_tmx_setup_current"
+  printf 'tmux-setup latest: %s\n' "$_tmx_setup_latest"
+
+  if _tmux_setup_version_gt "$_tmx_setup_latest" "$_tmx_setup_current"; then
+    if _tmux_setup_prompt_update "Update tmux-setup to ${_tmx_setup_latest} now?"; then
+      _tmux_setup_run_update "$_tmx_setup_latest"
+    else
+      printf 'tmux-setup update skipped\n'
+    fi
+  else
+    printf 'tmux-setup is up to date\n'
+  fi
 }
 
 _tmux_launcher_in_tmux() {
@@ -123,6 +244,8 @@ tmux_launcher() {
   case ${TERM:-} in
     ""|dumb) return 0 ;;
   esac
+
+  _tmux_setup_check_update
 
   _tmx_sessions=$(_tmux_launcher_sessions)
 
