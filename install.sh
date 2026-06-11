@@ -3,7 +3,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 PROJECT_NAME="tmux-setup"
-INSTALLER_VERSION="v0.2.0"
+INSTALLER_VERSION="v0.3.0"
 GITHUB_OWNER="Ba-koD"
 GITHUB_REPO="tmux-setup"
 MARKER_BEGIN="# >>> managed-by:${PROJECT_NAME} >>>"
@@ -304,9 +304,9 @@ set-option -g detach-on-destroy off
 
 set-option -g status-interval 1
 set-option -g status-style "bg=colour235,fg=colour250"
-set-option -g status-left-length 240
+set-option -g status-left-length 260
 set-option -g status-right-length 80
-set-option -g status-left "#{?client_prefix,#[reverse] Ctrl+B #[noreverse] c:new  |/-:split  h/j/k/l:move  H/J/K/L:resize  z:zoom  x:kill  n/p:win  0-9:goto  w:tree  s:sessions  [:copy  ]:paste  q:panes  Spc:layout  d:detach  r:reload  ?:all ,#[bold] Ctrl+B #[nobold] #S }"
+set-option -g status-left "#{?client_prefix,#{?#{>=:#{client_width},180},#[reverse] Ctrl+B #[noreverse] c:new  |/-:split  h/j/k/l:move  H/J/K/L:resize  z:zoom  x:kill  d:detach  n/p:win  0-9:goto  w:tree  s:sessions  [:copy  ]:paste  q:panes  Spc:layout  r:reload  ?:all,#{?#{>=:#{client_width},120},#[reverse] Ctrl+B #[noreverse] c:new  |/-:split  h/j/k/l:move  z:zoom  x:kill  d:detach  n/p:win  w:tree  [:copy  ]:paste  ?:all,#[reverse] C-b #[noreverse] c:new  |/-:split  h/j/k/l  z:zoom  d:detach  ?:all}},#{?#{>=:#{client_width},100},#[bold] Ctrl+B #[nobold] d:detach  ?:keys  #S,#[bold] C-b #[nobold] d:detach  #S}}"
 set-option -g status-right "#{?client_prefix,, %Y-%m-%d %H:%M }"
 set-window-option -g window-status-current-style "bg=colour37,fg=colour16"
 set-option -g pane-border-style "fg=colour238"

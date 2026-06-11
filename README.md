@@ -5,7 +5,7 @@ Personal tmux setup copied from my server workflow:
 - tmux config with mouse support
 - default `Ctrl+B` prefix
 - visible `Ctrl+B` prefix in the normal status line
-- zellij-style prefix hint in the status line
+- zellij-style prefix hint in the status line with width-aware levels
 - `Ctrl+B ?` key binding popup
 - interactive shell session picker on login
 - GitHub tag/release based version check
@@ -30,7 +30,7 @@ curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash -s --
 Install a specific GitHub tag:
 
 ```sh
-curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.2.0/install.sh | bash
+curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.3.0/install.sh | bash
 ```
 
 The installer writes:
@@ -106,12 +106,14 @@ Press `Ctrl+B` once to show the common key hints directly in the status line.
 tmux cannot detect a bare `Ctrl` key press by itself, so this is the closest
 portable behavior to zellij's key hint mode.
 
-When the prefix is not active, the normal status line still shows `Ctrl+B` so
-the prefix is visible by default.
+When the prefix is not active, the normal status line still shows `Ctrl+B` and
+`d:detach` so the prefix and detach flow are visible by default.
 
 The prefix hint includes common actions such as new window, splits, pane
 movement, resize, zoom, window navigation, session/window tree, copy mode,
 paste, pane numbers, layout cycling, detach, reload, and the full key popup.
+The hint changes by terminal width: wide terminals show the full list, medium
+terminals show the core workflow, and narrow terminals show a compact subset.
 
 Reload the config from inside tmux:
 
