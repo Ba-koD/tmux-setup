@@ -3,7 +3,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 PROJECT_NAME="tmux-setup"
-INSTALLER_VERSION="v0.4.0"
+INSTALLER_VERSION="v0.4.1"
 GITHUB_OWNER="Ba-koD"
 GITHUB_REPO="tmux-setup"
 MARKER_BEGIN="# >>> managed-by:${PROJECT_NAME} >>>"
@@ -347,7 +347,7 @@ write_launcher_script() {
   cat >"$launcher_file" <<'LAUNCHER_SH'
 # shellcheck shell=sh
 
-_tmux_setup_version="v0.4.0"
+_tmux_setup_version="v0.4.1"
 _tmux_setup_owner="Ba-koD"
 _tmux_setup_repo="tmux-setup"
 
@@ -466,17 +466,14 @@ _tmux_setup_check_update() {
   _tmx_setup_current=$(_tmux_setup_installed_version)
   _tmx_setup_latest=$(_tmux_setup_latest_version)
 
-  printf 'tmux-setup local: %s\n' "$_tmx_setup_current"
-  printf 'tmux-setup latest: %s\n' "$_tmx_setup_latest"
-
   if _tmux_setup_version_gt "$_tmx_setup_latest" "$_tmx_setup_current"; then
+    printf 'tmux-setup local: %s\n' "$_tmx_setup_current"
+    printf 'tmux-setup latest: %s\n' "$_tmx_setup_latest"
     if _tmux_setup_prompt_update "Update tmux-setup to ${_tmx_setup_latest} now?"; then
       _tmux_setup_run_update "$_tmx_setup_latest"
     else
       printf 'tmux-setup update skipped\n'
     fi
-  else
-    printf 'tmux-setup is up to date\n'
   fi
 }
 

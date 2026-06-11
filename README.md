@@ -31,7 +31,7 @@ curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash -s --
 Install a specific GitHub tag:
 
 ```sh
-curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.4.0/install.sh | bash
+curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.4.1/install.sh | bash
 ```
 
 The installer writes:
@@ -91,14 +91,15 @@ Open a new interactive shell. The launcher shows existing tmux sessions first.
 If `fzf` is installed, it uses an fzf menu. Otherwise, it falls back to a
 numbered prompt.
 
-Before the session picker, the launcher checks GitHub releases and prints the
-local/latest tmux-setup versions. If a newer tag exists, it asks whether to
-update immediately.
+Before the session picker, the launcher checks GitHub releases silently. If a
+newer tag exists, it prints the local/latest tmux-setup versions and asks
+whether to update immediately. If there is no newer version, it goes straight to
+the session picker.
 
 ```txt
-tmux-setup local: v0.4.0
-tmux-setup latest: v0.4.0
-tmux-setup is up to date
+tmux-setup local: v0.4.1
+tmux-setup latest: v0.5.0
+Update tmux-setup to v0.5.0 now? [y/N]
 tmux session> 
 [new session]
 [native shell]
