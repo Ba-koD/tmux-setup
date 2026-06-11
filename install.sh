@@ -5,7 +5,10 @@ IFS=$'\n\t'
 PROJECT_NAME="tmux-setup"
 MARKER_BEGIN="# >>> managed-by:${PROJECT_NAME} >>>"
 MARKER_END="# <<< managed-by:${PROJECT_NAME} <<<"
+LAUNCHER_MARKER_BEGIN="# >>> tmux session launcher >>>"
+LAUNCHER_MARKER_END="# <<< tmux session launcher <<<"
 CONFIG_NAME="personal.tmux.conf"
+LAUNCHER_NAME="launcher.sh"
 
 die() {
   printf 'tmux-setup: %s\n' "$*" >&2
@@ -19,10 +22,11 @@ info() {
 usage() {
   cat <<EOF
 Usage:
-  install.sh [--skip-package-install] [--uninstall]
+  install.sh [--skip-package-install] [--no-shell-launcher] [--uninstall]
 
 Options:
   --skip-package-install  Do not install tmux automatically when it is missing
+  --no-shell-launcher     Do not add the interactive shell session launcher
   --uninstall             Remove the managed tmux config block and config file
   -h, --help              Show this help
 
@@ -30,7 +34,7 @@ Install:
   curl -fsSL https://raw.githubusercontent.com/Ba-koD/tmux-setup/main/install.sh | bash
 
 After install:
-  tmux
+  Open a new interactive shell
   Ctrl+B ?
 EOF
 }
@@ -104,6 +108,10 @@ write_tmux_config() {
   cat >"$managed_conf" <<'TMUX_CONF'
 # Personal tmux defaults.
 
+set-option -g default-terminal "tmux-256color"
+set-option -ga terminal-overrides ",xterm-256color:RGB"
+set-option -g mouse on
+set-option -g history-limit 50000
 set-option -g prefix C-b
 unbind-key C-a
 bind-key C-b send-prefix
@@ -111,11 +119,9 @@ bind-key C-b send-prefix
 set-option -g base-index 1
 set-window-option -g pane-base-index 1
 set-option -g renumber-windows on
-
-set-option -g mouse on
 set-window-option -g mode-keys vi
-set-option -g history-limit 100000
 set-option -g escape-time 10
+set-option -g detach-on-destroy off
 
 set-option -g status-interval 5
 set-option -g status-style "bg=colour235,fg=colour250"
@@ -135,10 +141,10 @@ bind-key j select-pane -D
 bind-key k select-pane -U
 bind-key l select-pane -R
 
-bind-key H resize-pane -L 5
-bind-key J resize-pane -D 5
-bind-key K resize-pane -U 5
-bind-key L resize-pane -R 5
+bind-key -r H resize-pane -L 5
+bind-key -r J resize-pane -D 2
+bind-key -r K resize-pane -U 2
+bind-key -r L resize-pane -R 5
 TMUX_CONF
 
   if [[ "$supports_popup" -eq 1 ]]; then
@@ -152,6 +158,181 @@ TMUX_CONF
 bind-key ? list-keys -N
 TMUX_CONF
   fi
+}
+
+write_launcher_script() {
+  local launcher_file="$1"
+
+  cat >"$launcher_file" <<'LAUNCHER_SH'
+# shellcheck shell=sh
+
+_tmux_launcher_bin_dir="${TMUX_LAUNCHER_BIN_DIR:-$HOME/.local/bin}"
+if [ -d "$_tmux_launcher_bin_dir" ]; then
+  case ":${PATH:-}:" in
+    *":$_tmux_launcher_bin_dir:"*) ;;
+    *) PATH="$_tmux_launcher_bin_dir:${PATH:-}"; export PATH ;;
+  esac
+fi
+
+_tmux_launcher_mktemp() {
+  mktemp "${TMPDIR:-/tmp}/tmux-launcher.XXXXXX" 2>/dev/null || mktemp -t tmux-launcher 2>/dev/null
+}
+
+_tmux_launcher_in_tmux() {
+  [ -n "${TMUX:-}" ]
+}
+
+_tmux_launcher_interactive_tty() {
+  case $- in
+    *i*) ;;
+    *) return 1 ;;
+  esac
+  [ -t 0 ] && [ -t 1 ] && [ -z "${CI:-}" ] && [ -z "${SSH_ORIGINAL_COMMAND:-}" ]
+}
+
+_tmux_launcher_sessions() {
+  command -v tmux >/dev/null 2>&1 || return 0
+  tmux list-sessions -F '#S' 2>/dev/null || true
+}
+
+_tmux_launcher_prompt_name() {
+  printf 'New tmux session name (empty/q to stay in shell): ' >&2
+  IFS= read -r _tmx_name || return 1
+  _tmx_trimmed=$(printf '%s' "$_tmx_name" | awk '{$1=$1; print}')
+  case $_tmx_trimmed in
+    ""|q|Q) return 1 ;;
+  esac
+  printf '%s\n' "$_tmx_name"
+}
+
+_tmux_launcher_attach_or_create() {
+  _tmx_session=$1
+  command -v tmux >/dev/null 2>&1 || return 0
+  tmux new-session -A -s "$_tmx_session"
+}
+
+_tmux_launcher_new_session() {
+  _tmx_session=$(_tmux_launcher_prompt_name) || return 0
+  _tmux_launcher_attach_or_create "$_tmx_session"
+}
+
+_tmux_launcher_fzf_menu() {
+  _tmx_sessions=$1
+  _tmx_choice=$(
+    {
+      [ -n "$_tmx_sessions" ] && printf '%s\n' "$_tmx_sessions"
+      printf '%s\n' '[new session]' '[native shell]'
+    } | fzf --prompt='tmux session> ' --height=40% --reverse
+  ) || return 0
+
+  case $_tmx_choice in
+    ""|"[native shell]") return 0 ;;
+    "[new session]") _tmux_launcher_new_session ;;
+    *) _tmux_launcher_attach_or_create "$_tmx_choice" ;;
+  esac
+}
+
+_tmux_launcher_number_menu() {
+  _tmx_sessions=$1
+  _tmx_tmp=$(_tmux_launcher_mktemp) || return 1
+  if [ -n "$_tmx_sessions" ]; then
+    printf '%s\n' "$_tmx_sessions" >"$_tmx_tmp"
+  else
+    : >"$_tmx_tmp"
+  fi
+  _tmx_count=$(awk 'END { print NR + 0 }' "$_tmx_tmp")
+
+  if [ "$_tmx_count" -gt 0 ] 2>/dev/null; then
+    awk '{ printf "%d. %s\n", NR, $0 }' "$_tmx_tmp"
+  else
+    printf 'No tmux sessions.\n'
+  fi
+  printf 'n. 새 세션 생성\n'
+  printf 'q. native shell 유지\n'
+  printf 'Select tmux session: '
+  IFS= read -r _tmx_choice || {
+    rm -f "$_tmx_tmp"
+    return 0
+  }
+
+  case $_tmx_choice in
+    ""|q|Q)
+      rm -f "$_tmx_tmp"
+      return 0
+      ;;
+    n|N)
+      rm -f "$_tmx_tmp"
+      _tmux_launcher_new_session
+      return $?
+      ;;
+    *[!0-9]*)
+      rm -f "$_tmx_tmp"
+      return 0
+      ;;
+  esac
+
+  if [ "$_tmx_choice" -ge 1 ] 2>/dev/null && [ "$_tmx_choice" -le "$_tmx_count" ] 2>/dev/null; then
+    _tmx_session=$(awk -v n="$_tmx_choice" 'NR == n { print; exit }' "$_tmx_tmp")
+    rm -f "$_tmx_tmp"
+    [ -n "$_tmx_session" ] && _tmux_launcher_attach_or_create "$_tmx_session"
+    return $?
+  fi
+
+  rm -f "$_tmx_tmp"
+  return 0
+}
+
+tmux_launcher() {
+  command -v tmux >/dev/null 2>&1 || return 0
+  _tmux_launcher_interactive_tty || return 0
+  _tmux_launcher_in_tmux && return 0
+  case ${TERM:-} in
+    ""|dumb) return 0 ;;
+  esac
+
+  _tmx_sessions=$(_tmux_launcher_sessions)
+
+  if command -v fzf >/dev/null 2>&1; then
+    _tmux_launcher_fzf_menu "$_tmx_sessions"
+  else
+    _tmux_launcher_number_menu "$_tmx_sessions"
+  fi
+}
+
+tx() {
+  tmux_launcher
+}
+
+txl() {
+  command -v tmux >/dev/null 2>&1 || return 0
+  tmux list-sessions "$@"
+}
+
+txn() {
+  command -v tmux >/dev/null 2>&1 || return 0
+  if [ "$#" -eq 0 ]; then
+    _tmx_session=$(_tmux_launcher_prompt_name) || return 0
+  else
+    _tmx_session=$*
+  fi
+  _tmux_launcher_attach_or_create "$_tmx_session"
+}
+
+codext() {
+  if _tmux_launcher_in_tmux; then
+    command codex "$@"
+    return $?
+  fi
+
+  if ! command -v tmux >/dev/null 2>&1; then
+    command codex "$@"
+    return $?
+  fi
+
+  printf 'Choose or create a tmux session, then run codex inside it.\n'
+  tmux_launcher
+}
+LAUNCHER_SH
 }
 
 write_managed_block() {
@@ -202,6 +383,68 @@ write_managed_block() {
   rm -f "$block_file" "$tmp_file"
 }
 
+write_shell_launcher_block() {
+  local shell_conf="$1"
+  local block_file
+  local tmp_file
+
+  block_file="$(mktemp)"
+  tmp_file="$(mktemp)"
+
+  cat >"$block_file" <<'SHELL_BLOCK'
+# >>> tmux session launcher >>>
+case $- in
+  *i*)
+    if [ -f "$HOME/.config/tmux-launcher/launcher.sh" ]; then
+      . "$HOME/.config/tmux-launcher/launcher.sh"
+      if [ -z "${NO_TMUX:-}" ] && [ -z "${TMUX:-}" ]; then
+        tmux_launcher
+      fi
+    fi
+    ;;
+esac
+# <<< tmux session launcher <<<
+SHELL_BLOCK
+
+  if [[ -f "$shell_conf" ]] && grep -Fq "$LAUNCHER_MARKER_BEGIN" "$shell_conf"; then
+    awk -v begin="$LAUNCHER_MARKER_BEGIN" -v end="$LAUNCHER_MARKER_END" -v block_file="$block_file" '
+      $0 == begin {
+        while ((getline line < block_file) > 0) {
+          print line
+        }
+        close(block_file)
+        skip = 1
+        next
+      }
+      $0 == end {
+        skip = 0
+        next
+      }
+      skip != 1 {
+        print
+      }
+    ' "$shell_conf" >"$tmp_file"
+    install -m 0644 "$tmp_file" "$shell_conf"
+  elif [[ -f "$shell_conf" ]]; then
+    {
+      printf '\n'
+      cat "$block_file"
+    } >>"$shell_conf"
+  else
+    install -m 0644 "$block_file" "$shell_conf"
+  fi
+
+  rm -f "$block_file" "$tmp_file"
+}
+
+install_shell_launcher_blocks() {
+  local shell_conf
+
+  for shell_conf in "${HOME}/.zshrc" "${HOME}/.bashrc"; do
+    write_shell_launcher_block "$shell_conf"
+  done
+}
+
 remove_managed_block() {
   local tmux_conf="$1"
   local tmp_file
@@ -227,15 +470,49 @@ remove_managed_block() {
   rm -f "$tmp_file"
 }
 
+remove_shell_launcher_block() {
+  local shell_conf="$1"
+  local tmp_file
+
+  [[ -f "$shell_conf" ]] || return 0
+  grep -Fq "$LAUNCHER_MARKER_BEGIN" "$shell_conf" || return 0
+
+  tmp_file="$(mktemp)"
+  awk -v begin="$LAUNCHER_MARKER_BEGIN" -v end="$LAUNCHER_MARKER_END" '
+    $0 == begin {
+      skip = 1
+      next
+    }
+    $0 == end {
+      skip = 0
+      next
+    }
+    skip != 1 {
+      print
+    }
+  ' "$shell_conf" >"$tmp_file"
+  install -m 0644 "$tmp_file" "$shell_conf"
+  rm -f "$tmp_file"
+}
+
+remove_shell_launcher_blocks() {
+  remove_shell_launcher_block "${HOME}/.zshrc"
+  remove_shell_launcher_block "${HOME}/.bashrc"
+}
+
 main() {
   local skip_package_install=0
+  local install_shell_launcher=1
   local uninstall=0
-  local config_home config_dir managed_conf tmux_conf installed_version supports_popup
+  local config_home config_dir launcher_dir managed_conf launcher_file tmux_conf installed_version supports_popup
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
       --skip-package-install)
         skip_package_install=1
+        ;;
+      --no-shell-launcher)
+        install_shell_launcher=0
         ;;
       --uninstall)
         uninstall=1
@@ -253,12 +530,17 @@ main() {
 
   config_home="${XDG_CONFIG_HOME:-${HOME}/.config}"
   config_dir="${config_home}/tmux"
+  launcher_dir="${config_home}/tmux-launcher"
   managed_conf="${config_dir}/${CONFIG_NAME}"
+  launcher_file="${launcher_dir}/${LAUNCHER_NAME}"
   tmux_conf="${HOME}/.tmux.conf"
 
   if [[ "$uninstall" -eq 1 ]]; then
     remove_managed_block "$tmux_conf"
+    remove_shell_launcher_blocks
     rm -f "$managed_conf"
+    rm -f "$launcher_file"
+    rmdir "$launcher_dir" 2>/dev/null || true
     info "Removed managed tmux setup"
     return
   fi
@@ -274,8 +556,13 @@ main() {
   fi
 
   install -d -m 0755 "$config_dir"
+  install -d -m 0755 "$launcher_dir"
   write_tmux_config "$managed_conf" "$supports_popup"
+  write_launcher_script "$launcher_file"
   write_managed_block "$tmux_conf" "$managed_conf"
+  if [[ "$install_shell_launcher" -eq 1 ]]; then
+    install_shell_launcher_blocks
+  fi
 
   if [[ -n "${TMUX:-}" ]]; then
     tmux source-file "$tmux_conf"
@@ -283,7 +570,9 @@ main() {
   fi
 
   info "Installed tmux config: ${managed_conf}"
+  info "Installed tmux launcher: ${launcher_file}"
   info "Prefix key: Ctrl+B"
+  info "Shell session list: open a new interactive shell, or run tx"
   info "Key bindings screen: Ctrl+B then ?"
 }
 
