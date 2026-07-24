@@ -32,6 +32,8 @@ grep -F 'set-option -g default-shell' "$ROOT/install.sh" >/dev/null || \
   fail 'tmux config must launch new panes with the login shell'
 grep -F 'resolve_default_shell' "$ROOT/install.sh" >/dev/null || \
   fail 'tmux installer must resolve a usable login shell'
+grep -F 'getent passwd' "$ROOT/install.sh" >/dev/null || \
+  fail 'tmux installer must prefer the account login shell over the caller shell'
 
 for file in "$ROOT/tmux.conf" "$ROOT/install.sh"; do
   grep -F 'set-option -g escape-time 500' "$file" >/dev/null || \

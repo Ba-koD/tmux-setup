@@ -352,9 +352,22 @@ TMUX_CONF
 }
 
 resolve_default_shell() {
-  local shell_path="${SHELL:-}"
+  local account_name="${USER:-}"
+  local shell_path=""
   local shell_name
 
+  if [[ -z "$account_name" ]]; then
+    account_name="$(id -un)"
+  fi
+  if command -v getent >/dev/null 2>&1; then
+    shell_path="$(getent passwd "$account_name" 2>/dev/null | awk -F: 'NR == 1 { print $7 }')"
+  fi
+  if [[ -n "$shell_path" && -x "$shell_path" ]]; then
+    printf '%s\n' "$shell_path"
+    return 0
+  fi
+
+  shell_path="${SHELL:-}"
   if [[ "$shell_path" != /* ]]; then
     shell_path="$(command -v "$shell_path" 2>/dev/null || true)"
   fi
