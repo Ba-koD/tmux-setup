@@ -28,6 +28,10 @@ grep -F 'set-option -g set-clipboard on' "$ROOT/install.sh" >/dev/null || \
   fail 'tmux config must enable terminal clipboard integration'
 grep -F 'copy-selection-and-cancel' "$ROOT/install.sh" >/dev/null || \
   fail 'tmux config must copy selections to the system clipboard'
+grep -F 'set-option -g default-shell' "$ROOT/install.sh" >/dev/null || \
+  fail 'tmux config must launch new panes with the login shell'
+grep -F 'resolve_default_shell' "$ROOT/install.sh" >/dev/null || \
+  fail 'tmux installer must resolve a usable login shell'
 
 for file in "$ROOT/tmux.conf" "$ROOT/install.sh"; do
   grep -F 'set-option -g escape-time 500' "$file" >/dev/null || \

@@ -283,10 +283,15 @@ install_tmux_package() {
 write_tmux_config() {
   local managed_conf="$1"
   local supports_popup="$2"
+  local default_shell="$3"
+  local quoted_default_shell
 
-  cat >"$managed_conf" <<'TMUX_CONF'
+  quoted_default_shell="$(tmux_quote "$default_shell")"
+
+  cat >"$managed_conf" <<TMUX_CONF
 # Personal tmux defaults.
 
+set-option -g default-shell "$quoted_default_shell"
 set-option -g default-terminal "tmux-256color"
 set-option -ga terminal-overrides ",xterm-256color:RGB"
 set-option -g mouse on
@@ -344,6 +349,29 @@ TMUX_CONF
 bind-key ? list-keys -N
 TMUX_CONF
   fi
+}
+
+resolve_default_shell() {
+  local shell_path="${SHELL:-}"
+  local shell_name
+
+  if [[ "$shell_path" != /* ]]; then
+    shell_path="$(command -v "$shell_path" 2>/dev/null || true)"
+  fi
+  if [[ -n "$shell_path" && -x "$shell_path" ]]; then
+    printf '%s\n' "$shell_path"
+    return 0
+  fi
+
+  for shell_name in zsh bash sh; do
+    shell_path="$(command -v "$shell_name" 2>/dev/null || true)"
+    if [[ -n "$shell_path" && -x "$shell_path" ]]; then
+      printf '%s\n' "$shell_path"
+      return 0
+    fi
+  done
+
+  die "could not find a usable shell for tmux panes"
 }
 
 write_launcher_script() {
@@ -775,7 +803,7 @@ main() {
   local assume_yes=0
   local show_version=0
   local uninstall=0
-  local config_home state_dir config_dir launcher_dir managed_conf launcher_file version_file tmux_conf installed_version supports_popup
+  local config_home state_dir config_dir launcher_dir managed_conf launcher_file version_file tmux_conf installed_version supports_popup default_shell
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -850,10 +878,12 @@ main() {
     info "tmux ${installed_version} does not support display-popup; using built-in list-keys"
   fi
 
+  default_shell="$(resolve_default_shell)"
+
   install -d -m 0755 "$state_dir"
   install -d -m 0755 "$config_dir"
   install -d -m 0755 "$launcher_dir"
-  write_tmux_config "$managed_conf" "$supports_popup"
+  write_tmux_config "$managed_conf" "$supports_popup" "$default_shell"
   write_launcher_script "$launcher_file"
   write_managed_block "$tmux_conf" "$managed_conf"
   if [[ "$install_shell_launcher" -eq 1 ]]; then
