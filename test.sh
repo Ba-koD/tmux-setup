@@ -29,6 +29,11 @@ grep -F 'set-option -g set-clipboard on' "$ROOT/install.sh" >/dev/null || \
 grep -F 'copy-selection-and-cancel' "$ROOT/install.sh" >/dev/null || \
   fail 'tmux config must copy selections to the system clipboard'
 
+for file in "$ROOT/tmux.conf" "$ROOT/install.sh"; do
+  grep -F 'set-option -g escape-time 500' "$file" >/dev/null || \
+    fail "tmux must allow terminal query responses to arrive over SSH: $file"
+done
+
 grep -F 'git clone https://git.intp.me/rudgh/tmux-setup.git' "$ROOT/README.md" >/dev/null || \
   fail 'README must provide a one-command install from git.intp.me'
 
