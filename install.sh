@@ -528,6 +528,7 @@ _tmux_launcher_keyboard_select() (
   _tmx_selected=1; _tmx_escape=$(printf '\033'); _tmx_tty_state=$(stty -g </dev/tty) || { rm -f "$_tmx_tmp"; return 1; }
   _tmux_launcher_keyboard_cleanup() { stty "$_tmx_tty_state" </dev/tty 2>/dev/null || :; printf '\033[?1049l' >/dev/tty; rm -f "$_tmx_tmp"; }
   _tmux_launcher_discard_osc() { while :; do _tmx_osc_char=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0; [ -n "$_tmx_osc_char" ] || return 0; [ "$_tmx_osc_char" = "$(printf '\a')" ] && return 0; if [ "$_tmx_osc_char" = "$_tmx_escape" ]; then _tmx_osc_end=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0; [ "$_tmx_osc_end" = '\' ] && return 0; fi; done; }
+  _tmux_launcher_discard_csi() { while :; do _tmx_csi_char=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0; [ -n "$_tmx_csi_char" ] || return 0; case $_tmx_csi_char in [@-~]) return 0 ;; esac; done; }
   trap '_tmux_launcher_keyboard_cleanup' 0; trap 'exit 130' HUP INT TERM
   stty -icanon -echo min 1 time 0 </dev/tty; printf '\033[?1049h' >/dev/tty
   while :; do
@@ -540,7 +541,7 @@ _tmux_launcher_keyboard_select() (
       j) [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;;
       k) [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;;
       "$_tmx_escape")
-        stty min 0 time 2 </dev/tty; _tmx_key_1=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf ''); _tmx_key_2=""; if [ "$_tmx_key_1" = ']' ]; then _tmux_launcher_discard_osc; stty min 1 time 0 </dev/tty; continue; fi; [ "$_tmx_key_1" = '[' ] && _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf ''); stty min 1 time 0 </dev/tty
+        stty min 0 time 2 </dev/tty; _tmx_key_1=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf ''); _tmx_key_2=""; if [ "$_tmx_key_1" = ']' ]; then _tmux_launcher_discard_osc; stty min 1 time 0 </dev/tty; continue; fi; [ "$_tmx_key_1" = '[' ] && _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf ''); if [ "$_tmx_key_1" = '[' ] && [ "$_tmx_key_2" != A ] && [ "$_tmx_key_2" != B ]; then _tmux_launcher_discard_csi; stty min 1 time 0 </dev/tty; continue; fi; stty min 1 time 0 </dev/tty
         case $_tmx_key_1:$_tmx_key_2 in '[:A') [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;; '[:B') [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;; *) printf '%s\n' '[native shell]'; exit 0 ;; esac ;;
     esac
   done

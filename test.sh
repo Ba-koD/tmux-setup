@@ -19,6 +19,7 @@ fi
 for file in "$ROOT/install.sh" "$ROOT/launcher.sh"; do
   grep -F '_tmux_launcher_keyboard_menu' "$file" >/dev/null || fail "keyboard menu missing from $file"
   grep -F '_tmux_launcher_discard_osc' "$file" >/dev/null || fail "terminal response handling missing from $file"
+  grep -F '_tmux_launcher_discard_csi' "$file" >/dev/null || fail "terminal attribute handling missing from $file"
   grep -F 'stty -icanon -echo min 1 time 0' "$file" >/dev/null || fail "raw keyboard input missing from $file"
   grep -F 'dd bs=1 count=1' "$file" >/dev/null || fail "single-key input missing from $file"
 done

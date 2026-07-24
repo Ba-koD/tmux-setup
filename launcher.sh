@@ -199,6 +199,15 @@ _tmux_launcher_keyboard_select() (
       fi
     done
   }
+  _tmux_launcher_discard_csi() {
+    while :; do
+      _tmx_csi_char=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0
+      [ -n "$_tmx_csi_char" ] || return 0
+      case $_tmx_csi_char in
+        [@-~]) return 0 ;;
+      esac
+    done
+  }
   trap '_tmux_launcher_keyboard_cleanup' 0
   trap 'exit 130' HUP INT TERM
   stty -icanon -echo min 1 time 0 </dev/tty
@@ -238,6 +247,11 @@ _tmux_launcher_keyboard_select() (
           continue
         fi
         [ "$_tmx_key_1" = '[' ] && _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf '')
+        if [ "$_tmx_key_1" = '[' ] && [ "$_tmx_key_2" != A ] && [ "$_tmx_key_2" != B ]; then
+          _tmux_launcher_discard_csi
+          stty min 1 time 0 </dev/tty
+          continue
+        fi
         stty min 1 time 0 </dev/tty
         case $_tmx_key_1:$_tmx_key_2 in
           '[:A') [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;;
