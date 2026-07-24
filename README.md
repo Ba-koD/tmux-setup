@@ -15,7 +15,7 @@ Personal tmux setup copied from my server workflow:
 ## Install
 
 ```sh
-curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash
+git clone https://git.intp.me/rudgh/tmux-setup.git && bash tmux-setup/install.sh
 ```
 
 The installer prints the local, latest, and bundled versions on every run, then
@@ -88,8 +88,8 @@ Useful installer options:
 ## Usage
 
 Open a new interactive shell. The launcher shows existing tmux sessions first.
-If `fzf` is installed, it uses an fzf menu. Otherwise, it falls back to a
-numbered prompt.
+Use the up/down arrows or `j`/`k` to move, Enter to select, and Esc or `q` to
+stay in the native shell.
 
 Before the session picker, the launcher checks GitHub releases silently. If a
 newer tag exists, it prints the local/latest tmux-setup versions and asks

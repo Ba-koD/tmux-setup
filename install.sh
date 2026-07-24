@@ -38,7 +38,7 @@ Options:
   -h, --help              Show this help
 
 Install:
-  curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash
+  git clone https://git.intp.me/rudgh/tmux-setup.git && bash tmux-setup/install.sh
 
 After install:
   Open a new interactive shell
@@ -515,70 +515,34 @@ _tmux_launcher_new_session() {
   _tmux_launcher_attach_or_create "$_tmx_session"
 }
 
-_tmux_launcher_fzf_menu() {
-  _tmx_sessions=$1
-  _tmx_choice=$(
-    {
-      [ -n "$_tmx_sessions" ] && printf '%s\n' "$_tmx_sessions"
-      printf '%s\n' '[new session]' '[native shell]'
-    } | fzf --prompt='tmux session> ' --height=40% --reverse
-  ) || return 0
-
-  case $_tmx_choice in
-    ""|"[native shell]") return 0 ;;
-    "[new session]") _tmux_launcher_new_session ;;
-    *) _tmux_launcher_attach_or_create "$_tmx_choice" ;;
-  esac
-}
-
-_tmux_launcher_number_menu() {
+_tmux_launcher_keyboard_select() (
   _tmx_sessions=$1
   _tmx_tmp=$(_tmux_launcher_mktemp) || return 1
-  if [ -n "$_tmx_sessions" ]; then
-    printf '%s\n' "$_tmx_sessions" >"$_tmx_tmp"
-  else
-    : >"$_tmx_tmp"
-  fi
+  { [ -n "$_tmx_sessions" ] && printf '%s\n' "$_tmx_sessions"; printf '%s\n' '[new session]' '[native shell]'; } >"$_tmx_tmp"
   _tmx_count=$(awk 'END { print NR + 0 }' "$_tmx_tmp")
+  _tmx_selected=1; _tmx_escape=$(printf '\033'); _tmx_tty_state=$(stty -g </dev/tty) || { rm -f "$_tmx_tmp"; return 1; }
+  _tmux_launcher_keyboard_cleanup() { stty "$_tmx_tty_state" </dev/tty 2>/dev/null || :; printf '\033[?1049l' >/dev/tty; rm -f "$_tmx_tmp"; }
+  trap '_tmux_launcher_keyboard_cleanup' 0; trap 'exit 130' HUP INT TERM
+  stty -icanon -echo min 1 time 0 </dev/tty; printf '\033[?1049h' >/dev/tty
+  while :; do
+    printf '\033[H\033[Jtmux session\n\n' >/dev/tty
+    awk -v selected="$_tmx_selected" 'BEGIN { esc = sprintf("%c", 27) } NR == selected { printf "%s[7m> %s%s[0m\n", esc, $0, esc; next } { printf "  %s\n", $0 }' "$_tmx_tmp" >/dev/tty
+    _tmx_key=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || exit 1
+    case $_tmx_key in
+      "") awk -v n="$_tmx_selected" 'NR == n { print; exit }' "$_tmx_tmp"; exit 0 ;;
+      q|Q) printf '%s\n' '[native shell]'; exit 0 ;;
+      j) [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;;
+      k) [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;;
+      "$_tmx_escape")
+        stty min 0 time 2 </dev/tty; _tmx_key_1=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf ''); _tmx_key_2=""; [ "$_tmx_key_1" = '[' ] && _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf ''); stty min 1 time 0 </dev/tty
+        case $_tmx_key_1:$_tmx_key_2 in '[:A') [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;; '[:B') [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;; *) printf '%s\n' '[native shell]'; exit 0 ;; esac ;;
+    esac
+  done
+)
 
-  if [ "$_tmx_count" -gt 0 ] 2>/dev/null; then
-    awk '{ printf "%d. %s\n", NR, $0 }' "$_tmx_tmp"
-  else
-    printf 'No tmux sessions.\n'
-  fi
-  printf 'n. 새 세션 생성\n'
-  printf 'q. native shell 유지\n'
-  printf 'Select tmux session: '
-  IFS= read -r _tmx_choice || {
-    rm -f "$_tmx_tmp"
-    return 0
-  }
-
-  case $_tmx_choice in
-    ""|q|Q)
-      rm -f "$_tmx_tmp"
-      return 0
-      ;;
-    n|N)
-      rm -f "$_tmx_tmp"
-      _tmux_launcher_new_session
-      return $?
-      ;;
-    *[!0-9]*)
-      rm -f "$_tmx_tmp"
-      return 0
-      ;;
-  esac
-
-  if [ "$_tmx_choice" -ge 1 ] 2>/dev/null && [ "$_tmx_choice" -le "$_tmx_count" ] 2>/dev/null; then
-    _tmx_session=$(awk -v n="$_tmx_choice" 'NR == n { print; exit }' "$_tmx_tmp")
-    rm -f "$_tmx_tmp"
-    [ -n "$_tmx_session" ] && _tmux_launcher_attach_or_create "$_tmx_session"
-    return $?
-  fi
-
-  rm -f "$_tmx_tmp"
-  return 0
+_tmux_launcher_keyboard_menu() {
+  _tmx_choice=$(_tmux_launcher_keyboard_select "$1") || return 0
+  case $_tmx_choice in ""|"[native shell]") return 0 ;; "[new session]") _tmux_launcher_new_session ;; *) _tmux_launcher_attach_or_create "$_tmx_choice" ;; esac
 }
 
 tmux_launcher() {
@@ -593,11 +557,7 @@ tmux_launcher() {
 
   _tmx_sessions=$(_tmux_launcher_sessions)
 
-  if command -v fzf >/dev/null 2>&1; then
-    _tmux_launcher_fzf_menu "$_tmx_sessions"
-  else
-    _tmux_launcher_number_menu "$_tmx_sessions"
-  fi
+  _tmux_launcher_keyboard_menu "$_tmx_sessions"
 }
 
 tx() {
