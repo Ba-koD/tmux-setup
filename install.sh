@@ -290,6 +290,7 @@ write_tmux_config() {
 set-option -g default-terminal "tmux-256color"
 set-option -ga terminal-overrides ",xterm-256color:RGB"
 set-option -g mouse on
+set-option -g set-clipboard on
 set-option -g history-limit 50000
 set-option -g prefix C-b
 unbind-key C-a
@@ -326,6 +327,10 @@ bind-key -r H resize-pane -L 5
 bind-key -r J resize-pane -D 2
 bind-key -r K resize-pane -U 2
 bind-key -r L resize-pane -R 5
+
+bind-key -T copy-mode-vi v send-keys -X begin-selection
+bind-key -T copy-mode-vi y send-keys -X copy-selection-and-cancel
+bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-and-cancel
 TMUX_CONF
 
   if [[ "$supports_popup" -eq 1 ]]; then

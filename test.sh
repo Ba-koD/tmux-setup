@@ -23,6 +23,11 @@ for file in "$ROOT/install.sh" "$ROOT/launcher.sh"; do
   grep -F 'dd bs=1 count=1' "$file" >/dev/null || fail "single-key input missing from $file"
 done
 
+grep -F 'set-option -g set-clipboard on' "$ROOT/install.sh" >/dev/null || \
+  fail 'tmux config must enable terminal clipboard integration'
+grep -F 'copy-selection-and-cancel' "$ROOT/install.sh" >/dev/null || \
+  fail 'tmux config must copy selections to the system clipboard'
+
 grep -F 'git clone https://git.intp.me/rudgh/tmux-setup.git' "$ROOT/README.md" >/dev/null || \
   fail 'README must provide a one-command install from git.intp.me'
 
