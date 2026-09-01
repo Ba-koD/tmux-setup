@@ -1,0 +1,296 @@
+name: Release
+
+# On a VERSION bump this publishes two things:
+#   - a GitHub release carrying install.sh, launcher.sh, tmux.conf and checksums
+#   - the GitHub Pages landing page, generated here at build time
+#
+# One-time setup: Settings -> Pages -> Source: GitHub Actions
+# To release: bump VERSION, commit, push. That is all.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - VERSION
+      - install.sh
+      - launcher.sh
+      - tmux.conf
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        run: |
+          set -euo pipefail
+          v=$(tr -d ' \t\n\r' < VERSION); v=${v#v}
+          if ! printf '%s' "$v" | grep -qE '^[0-9][0-9A-Za-z.+~-]*$'; then
+            echo "::error::VERSION must start with a digit (got '$v')"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then
+            echo "::notice::v$v is already tagged; refreshing its assets and the page"
+          fi
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+          bash ./test.sh
+
+      # ----------------------------------------------------------------------
+      # Release
+      # ----------------------------------------------------------------------
+
+      - name: Collect release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp install.sh launcher.sh tmux.conf release/
+          ( cd release && sha256sum -- install.sh launcher.sh tmux.conf > SHA256SUMS )
+          cat release/SHA256SUMS
+
+      # Runs on every build, not only for a new tag: an existing release keeps
+      # its notes and simply has its assets refreshed.
+      - name: Tag and release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: v${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Install
+
+            ```sh
+            curl -fsSL https://github.com/${{ github.repository }}/raw/v${{ steps.ver.outputs.version }}/install.sh | bash
+            ```
+
+            Already installed? `txu` picks this up on its own, and so does the
+            next login shell.
+
+            Verify the attached files with `sha256sum -c SHA256SUMS`.
+          files: |
+            release/install.sh
+            release/launcher.sh
+            release/tmux.conf
+            release/SHA256SUMS
+
+      # ----------------------------------------------------------------------
+      # Pages
+      # ----------------------------------------------------------------------
+
+      - name: Landing page
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p docs
+          cat > docs/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en"><head><meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>tmux-setup</title>
+          <meta name="description" content="tmux-setup: an interactive tmux session picker and an opinionated tmux config, installed by a single script.">
+          <style>
+            :root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--pre:#f4f4f5;--bd:#e4e4e7;--acc:#0969da}
+            @media(prefers-color-scheme:dark){:root{--bg:#18181b;--fg:#e4e4e7;--mut:#a1a1aa;--pre:#27272a;--bd:#3f3f46;--acc:#79c0ff}}
+            *{box-sizing:border-box}
+            body{background:var(--bg);color:var(--fg);font:16px/1.65 ui-sans-serif,system-ui,sans-serif;
+                 max-width:46rem;margin:0 auto;padding:3rem 1.25rem 4rem}
+            h1{font-size:2.25rem;margin:0 0 .25rem}
+            h2{font-size:1.25rem;margin:2.75rem 0 .75rem;padding-top:.85rem;border-top:1px solid var(--bd)}
+            h3{font-size:1rem;margin:1.75rem 0 .5rem;color:var(--mut);font-weight:600}
+            pre{background:var(--pre);border:1px solid var(--bd);border-radius:8px;
+                padding:1rem;overflow-x:auto;font-size:.8125rem;line-height:1.55}
+            code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+            p code,li code,td code,th code{background:var(--pre);border:1px solid var(--bd);
+                border-radius:4px;padding:.05rem .3rem;font-size:.85em}
+            pre code{background:none;border:0;padding:0;font-size:inherit}
+            p.mut,li.mut,.mut{color:var(--mut)}
+            a{color:var(--acc)}
+            ul{padding-left:1.25rem}
+            li{margin:.2rem 0}
+            table{border-collapse:collapse;width:100%;font-size:.9375rem;display:block;overflow-x:auto}
+            td,th{text-align:left;padding:.45rem .6rem;border-bottom:1px solid var(--bd);vertical-align:top}
+            th{white-space:nowrap;font-weight:600}
+            .badge{display:inline-block;font-size:.8125rem;color:var(--mut);border:1px solid var(--bd);
+                   border-radius:999px;padding:.1rem .6rem;vertical-align:middle}
+            footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--bd);
+                   font-size:.875rem;color:var(--mut)}
+          </style></head><body>
+
+          <h1>tmux-setup</h1>
+          <p class="mut">An interactive tmux session picker and an opinionated tmux config,
+          installed by a single script and updated by itself.
+          <span class="badge">v__VERSION__</span></p>
+
+          <h2>What it does</h2>
+          <ul>
+            <li>Shows a keyboard-driven picker of your tmux sessions when you open a shell &mdash; attach, create, or drop to the plain shell.</li>
+            <li>Ships a tmux config with mouse support and the default <code>Ctrl+B</code> prefix.</li>
+            <li>Puts a zellij-style prefix hint in the status line, with width-aware levels.</li>
+            <li><code>Ctrl+B ?</code> opens a key bindings popup.</li>
+            <li>Adds the <code>tx</code>, <code>txl</code>, <code>txn</code>, <code>txu</code>, <code>txv</code> and <code>codext</code> commands.</li>
+            <li>Updates itself from GitHub in the background, with nothing to confirm.</li>
+            <li>Your own settings live in overlay files that installs and updates never touch.</li>
+          </ul>
+
+          <pre><code>  tmux session v__VERSION__
+
+               work                                      3 win attached
+             &gt; dotfiles                                          1 win
+               new session                          create and attach
+               native shell                      skip tmux this time
+
+            up/down or j/k move   enter select   q/esc native shell</code></pre>
+
+          <h2>Install</h2>
+          <pre><code>curl -fsSL https://github.com/__REPO__/raw/main/install.sh | bash</code></pre>
+          <p class="mut">The installer prints the local, latest, and bundled versions on
+          every run, then asks whether to install, update, or reinstall. In a
+          non-interactive shell it takes the default answer and continues. It installs
+          tmux through your package manager if it is missing.</p>
+
+          <h3>Variations</h3>
+          <pre><code># tmux is already installed, you only want the config
+          curl -fsSL https://github.com/__REPO__/raw/main/install.sh | bash -s -- --skip-package-install
+
+          # config only, do not touch ~/.bashrc or ~/.zshrc
+          curl -fsSL https://github.com/__REPO__/raw/main/install.sh | bash -s -- --no-shell-launcher
+
+          # pin a specific release
+          curl -fsSL https://github.com/__REPO__/raw/v__VERSION__/install.sh | bash
+
+          # from a clone
+          git clone https://github.com/__REPO__.git &amp;&amp; bash tmux-setup/install.sh</code></pre>
+          <p class="mut">Other flags: <code>--yes</code> accepts the default prompts,
+          <code>--version</code> prints the local, latest and bundled versions,
+          <code>--no-update-check</code> skips the GitHub version check,
+          <code>--uninstall</code> removes everything it added.</p>
+
+          <h3>What it writes</h3>
+          <pre><code>~/.config/tmux-setup/version
+          ~/.config/tmux-setup/managed.sums
+          ~/.config/tmux-setup/shell-launcher
+          ~/.config/tmux/personal.tmux.conf
+          ~/.config/tmux-launcher/launcher.sh</code></pre>
+          <p class="mut">Your <code>~/.tmux.conf</code>, <code>~/.bashrc</code> and
+          <code>~/.zshrc</code> are never replaced. The installer only adds or refreshes
+          its own marked block inside them.</p>
+
+          <h2>Usage</h2>
+          <p class="mut">Open a new interactive shell and the picker appears. Sessions are
+          listed first with their window count and whether a client is attached.</p>
+          <table>
+            <tr><th><code>up</code>/<code>down</code>, <code>j</code>/<code>k</code></th><td>move the selection</td></tr>
+            <tr><th><code>g</code>/<code>G</code></th><td>jump to the first or last row</td></tr>
+            <tr><th><code>Enter</code></th><td>attach, or create the new session</td></tr>
+            <tr><th><code>q</code>, <code>Esc</code></th><td>stay in the plain shell</td></tr>
+          </table>
+          <p class="mut">Only the text is colored: sessions in cyan, the selection in
+          bright bold with a <code>&gt;</code> marker, the new-session row in green, and
+          everything secondary in grey. Set <code>NO_COLOR=1</code> for a monochrome
+          picker, or start one shell with <code>NO_TMUX=1</code> to skip the picker.</p>
+
+          <h3>Commands</h3>
+          <table>
+            <tr><th><code>tx</code></th><td>open the session picker</td></tr>
+            <tr><th><code>txl</code></th><td>list tmux sessions</td></tr>
+            <tr><th><code>txn NAME</code></th><td>attach to a session, creating it if needed</td></tr>
+            <tr><th><code>txu</code></th><td>update now (<code>txu -f</code> reinstalls the latest release)</td></tr>
+            <tr><th><code>txv</code></th><td>show versions, auto-update state, and hand-edited files</td></tr>
+            <tr><th><code>codext</code></th><td>pick or create a session, then run codex inside it</td></tr>
+          </table>
+
+          <h3>In tmux</h3>
+          <table>
+            <tr><th><code>Ctrl+B ?</code></th><td>key bindings popup</td></tr>
+            <tr><th><code>Ctrl+B</code></th><td>show the key hints in the status line</td></tr>
+            <tr><th><code>Ctrl+B r</code></th><td>reload the config</td></tr>
+            <tr><th><code>Ctrl+B d</code></th><td>detach</td></tr>
+          </table>
+          <p class="mut">tmux cannot detect a bare <code>Ctrl</code> press, so pressing the
+          prefix once is the closest portable thing to zellij's key hint mode. When the
+          prefix is not active the status line still shows <code>Ctrl+B</code> and
+          <code>d:detach</code>.</p>
+
+          <h2>Settings that survive updates</h2>
+          <p class="mut"><code>personal.tmux.conf</code> and <code>launcher.sh</code> are
+          generated, and every update rewrites them. Put your own settings in the two
+          overlay files instead &mdash; the installer creates them once, loads them last,
+          and never touches them again.</p>
+          <pre><code>~/.config/tmux/local.tmux.conf     # tmux settings, sourced after the defaults
+          ~/.config/tmux-launcher/local.sh   # shell functions, sourced after the launcher</code></pre>
+          <pre><code># ~/.config/tmux/local.tmux.conf
+          set-option -g prefix C-a
+          unbind-key C-b
+          bind-key C-a send-prefix</code></pre>
+          <p class="mut">If you edit a generated file anyway, the installer notices: it
+          records a checksum of everything it writes, then keeps your
+          <code>personal.tmux.conf</code> and writes the new defaults to
+          <code>personal.tmux.conf.new</code>, and backs up an edited
+          <code>launcher.sh</code> before replacing it.</p>
+
+          <h2>Updates</h2>
+          <p class="mut">Every login shell checks GitHub in the background and installs a
+          newer release on its own. There is nothing to confirm, and the check is
+          throttled to at most once every six hours.</p>
+          <pre><code>txu        # check now and install if a newer release exists
+          txu -f     # reinstall the latest release even when already current
+          txv        # versions, auto-update state, hand-edited files</code></pre>
+          <pre><code>TMUX_SETUP_AUTO_UPDATE=0        # report a new version but do not install it
+          TMUX_SETUP_UPDATE_INTERVAL=0    # check on every shell (default 21600 seconds)
+          TMUX_SETUP_UPDATE_TIMEOUT=10    # GitHub request timeout (default 3 seconds)
+          NO_TMUX_UPDATE=1                # skip the check entirely for this shell</code></pre>
+          <p class="mut">Updates reuse the flags of the original install, so a setup made
+          with <code>--no-shell-launcher</code> never gains a shell block behind your
+          back.</p>
+
+          <h2>Uninstall</h2>
+          <pre><code>curl -fsSL https://github.com/__REPO__/raw/main/install.sh | bash -s -- --uninstall</code></pre>
+          <p class="mut">Your <code>local.tmux.conf</code> and <code>local.sh</code>
+          overlays are left in place.</p>
+
+          <footer>
+          <a href="https://github.com/__REPO__">Source on GitHub</a> &middot;
+          <a href="https://github.com/__REPO__/releases">Releases</a> &middot;
+          <a href="https://github.com/__REPO__/releases/latest">Latest release</a>
+          </footer>
+
+          </body></html>
+          HTML
+          sed -i -e "s#__VERSION__#${VERSION}#g" \
+                 -e "s#__REPO__#${GITHUB_REPOSITORY}#g" docs/index.html
+          # without this GitHub Pages runs Jekyll over the directory
+          touch docs/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
