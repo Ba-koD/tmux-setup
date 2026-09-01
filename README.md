@@ -7,7 +7,7 @@ Personal tmux setup copied from my server workflow:
 - visible `Ctrl+B` prefix in the normal status line
 - zellij-style prefix hint in the status line with width-aware levels
 - `Ctrl+B ?` key binding popup
-- colored, keyboard-driven session picker on login
+- keyboard-driven session picker on login, colored by text only
 - automatic updates from GitHub, with no prompt to answer
 - personal overlay files that installs and updates never overwrite
 - `tx`, `txl`, `txn`, `txu`, `txv`, and `codext` helper commands
@@ -31,7 +31,7 @@ curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash -s --
 Install a specific GitHub tag:
 
 ```sh
-curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.5.0/install.sh | bash
+curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.5.1/install.sh | bash
 ```
 
 The installer writes:
@@ -136,9 +136,9 @@ confirm, and the check is throttled so it hits the network at most once every
 six hours.
 
 ```txt
- tmux-setup  v0.4.1 -> v0.5.0
-Installing tmux-setup v0.5.0...
-tmux-setup v0.5.0 is active
+tmux-setup v0.4.1 -> v0.5.1
+Installing tmux-setup v0.5.1...
+tmux-setup v0.5.1 is active
 ```
 
 Update by hand at any time:
@@ -167,19 +167,23 @@ those machines; every later update is automatic.
 ## Usage
 
 Open a new interactive shell. The launcher shows existing tmux sessions first,
-each in its own color, with the window count and whether a client is attached.
-Use the up/down arrows or `j`/`k` to move, `g`/`G` to jump to the ends, Enter to
-select, and Esc or `q` to stay in the native shell.
+with the window count and whether a client is attached. Use the up/down arrows
+or `j`/`k` to move, `g`/`G` to jump to the ends, Enter to select, and Esc or `q`
+to stay in the native shell.
+
+Only the text is colored: sessions in cyan, the selection in bright bold with a
+`>` marker, the new-session row in green, and everything secondary in grey.
+There are no background fills or rules.
 
 ```txt
-  tmux / session launcher   v0.5.0
+  tmux session v0.5.1
 
-   work                                        3 win attached
-   dotfiles                                            1 win
- > new session                            create and attach
-   native shell                         skip tmux this time
+     work                                      3 win attached
+   > dotfiles                                          1 win
+     new session                          create and attach
+     native shell                      skip tmux this time
 
-  up/down|j/k move   enter select   q/esc native shell
+  up/down or j/k move   enter select   q/esc native shell
 ```
 
 Set `NO_COLOR=1` for a plain monochrome picker.
