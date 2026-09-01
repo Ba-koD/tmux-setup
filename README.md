@@ -15,12 +15,21 @@ Personal tmux setup copied from my server workflow:
 ## Install
 
 ```sh
-git clone https://git.intp.me/rudgh/tmux-setup.git && bash tmux-setup/install.sh
+curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash
 ```
+
+`install.sh` is self-contained. It carries the launcher and the tmux config
+inside itself, so there is nothing to clone or download alongside it.
 
 The installer prints the local, latest, and bundled versions on every run, then
 asks whether to install, update, or reinstall. In non-interactive shells it uses
 the default answer and continues.
+
+From a clone instead:
+
+```sh
+git clone https://git.intp.me/rudgh/tmux-setup.git && bash tmux-setup/install.sh
+```
 
 If tmux is already installed and you only want the config:
 
