@@ -1,6 +1,6 @@
 # shellcheck shell=sh
 
-_tmux_setup_version="v0.5.1"
+_tmux_setup_version="v0.5.2"
 _tmux_setup_owner="Ba-koD"
 _tmux_setup_repo="tmux-setup"
 
@@ -239,18 +239,34 @@ _tmux_launcher_session_details() {
     -F "#{session_name}${_tmx_unit}#{session_windows} win#{?session_attached, attached,}" 2>/dev/null || true
 }
 
-_tmux_launcher_prompt_name() {
-  if _tmux_setup_use_color; then
-    printf '\033[1mNew tmux session name\033[0m \033[90m(empty or q to stay in the shell)\033[0m\n  \033[32m>\033[0m ' >&2
-  else
-    printf 'New tmux session name (empty/q to stay in shell): ' >&2
-  fi
-  IFS= read -r _tmx_name || return 1
-  _tmx_trimmed=$(printf '%s' "$_tmx_name" | awk '{$1=$1; print}')
-  case $_tmx_trimmed in
-    ""|q|Q) return 1 ;;
+# tmux octal-escapes a session name that is not valid UTF-8, so refuse it here.
+_tmux_launcher_name_ok() {
+  case ${LC_ALL:-${LC_CTYPE:-${LANG:-}}} in
+    *UTF-8*|*utf-8*|*UTF8*|*utf8*) ;;
+    *) return 0 ;;
   esac
-  printf '%s\n' "$_tmx_name"
+  command -v iconv >/dev/null 2>&1 || return 0
+  printf '%s' "$1" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1
+}
+
+_tmux_launcher_prompt_name() {
+  while :; do
+    if _tmux_setup_use_color; then
+      printf '\033[1mNew tmux session name\033[0m \033[90m(empty or q to stay in the shell)\033[0m\n  \033[32m>\033[0m ' >&2
+    else
+      printf 'New tmux session name (empty/q to stay in shell): ' >&2
+    fi
+    IFS= read -r _tmx_name || return 1
+    _tmx_trimmed=$(printf '%s' "$_tmx_name" | awk '{$1=$1; print}')
+    case $_tmx_trimmed in
+      ""|q|Q) return 1 ;;
+    esac
+    if _tmux_launcher_name_ok "$_tmx_name"; then
+      printf '%s\n' "$_tmx_name"
+      return 0
+    fi
+    _tmux_setup_say err 'That name is not valid text; type it again' >&2
+  done
 }
 
 _tmux_launcher_attach_or_create() {
@@ -398,22 +414,28 @@ _tmux_launcher_keyboard_select() (
         stty min 0 time 2 </dev/tty
         _tmx_key_1=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || _tmx_key_1=""
         _tmx_key_2=""
-        if [ "$_tmx_key_1" = ']' ]; then
-          _tmux_launcher_discard_osc
-          stty min 1 time 0 </dev/tty
-          continue
-        fi
-        [ "$_tmx_key_1" = '[' ] && _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf '')
-        if [ "$_tmx_key_1" = '[' ] && [ "$_tmx_key_2" != A ] && [ "$_tmx_key_2" != B ]; then
-          _tmux_launcher_discard_csi
-          stty min 1 time 0 </dev/tty
-          continue
-        fi
+        case $_tmx_key_1 in
+          '[')
+            _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf '')
+            # A final byte ends the sequence; anything else still has bytes to come.
+            case $_tmx_key_2 in
+              [@-~]) ;;
+              *) _tmux_launcher_discard_csi ;;
+            esac
+            ;;
+          O)
+            # SS3: the same cursor keys once the terminal is in application mode.
+            _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf '')
+            ;;
+          ']')
+            _tmux_launcher_discard_osc
+            ;;
+        esac
         stty min 1 time 0 </dev/tty
         case $_tmx_key_1:$_tmx_key_2 in
-          '[:A') [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;;
-          '[:B') [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;;
-          *) printf '%s\n' '[native shell]'; exit 0 ;;
+          '[:A'|'O:A') [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;;
+          '[:B'|'O:B') [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;;
+          ':') printf '%s\n' '[native shell]'; exit 0 ;;
         esac
         ;;
     esac

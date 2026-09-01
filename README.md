@@ -31,7 +31,7 @@ curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/main/install.sh | bash -s --
 Install a specific GitHub tag:
 
 ```sh
-curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.5.1/install.sh | bash
+curl -fsSL https://github.com/Ba-koD/tmux-setup/raw/v0.5.2/install.sh | bash
 ```
 
 The installer writes:
@@ -176,7 +176,7 @@ Only the text is colored: sessions in cyan, the selection in bright bold with a
 There are no background fills or rules.
 
 ```txt
-  tmux session v0.5.1
+  tmux session v0.5.2
 
      work                                      3 win attached
    > dotfiles                                          1 win
