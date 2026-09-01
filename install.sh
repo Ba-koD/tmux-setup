@@ -3,15 +3,24 @@ set -euo pipefail
 IFS=$'\n\t'
 
 PROJECT_NAME="tmux-setup"
-INSTALLER_VERSION="v0.4.1"
+INSTALLER_VERSION="v0.5.0"
 GITHUB_OWNER="Ba-koD"
 GITHUB_REPO="tmux-setup"
 MARKER_BEGIN="# >>> managed-by:${PROJECT_NAME} >>>"
 MARKER_END="# <<< managed-by:${PROJECT_NAME} <<<"
 LAUNCHER_MARKER_BEGIN="# >>> tmux session launcher >>>"
 LAUNCHER_MARKER_END="# <<< tmux session launcher <<<"
+LOCAL_MARKER_BEGIN="# >>> ${PROJECT_NAME}:local >>>"
+LOCAL_MARKER_END="# <<< ${PROJECT_NAME}:local <<<"
+LEGACY_LAUNCHER_MARKERS=(
+  "# >>> tmux session launcher (local) >>>|# <<< tmux session launcher (local) <<<"
+)
 CONFIG_NAME="personal.tmux.conf"
 LAUNCHER_NAME="launcher.sh"
+LOCAL_CONFIG_NAME="local.tmux.conf"
+LOCAL_LAUNCHER_NAME="local.sh"
+SUMS_NAME="managed.sums"
+SHELL_FLAG_NAME="shell-launcher"
 ORIGINAL_ARGS=("$@")
 
 die() {
@@ -39,6 +48,10 @@ Options:
 
 Install:
   git clone https://git.intp.me/rudgh/tmux-setup.git && bash tmux-setup/install.sh
+
+Personal settings that updates never overwrite:
+  ${XDG_CONFIG_HOME:-~/.config}/tmux/local.tmux.conf
+  ${XDG_CONFIG_HOME:-~/.config}/tmux-launcher/local.sh
 
 After install:
   Open a new interactive shell
@@ -280,6 +293,99 @@ install_tmux_package() {
   command -v tmux >/dev/null 2>&1 || die "tmux install finished but tmux is still not in PATH"
 }
 
+file_sum() {
+  local path="$1"
+
+  [[ -f "$path" ]] || return 0
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" 2>/dev/null | awk '{ print $1 }'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" 2>/dev/null | awk '{ print $1 }'
+  fi
+}
+
+recorded_sum() {
+  local key="$1"
+  local sums_file="$2"
+
+  [[ -f "$sums_file" ]] || return 0
+  awk -v k="$key" '$1 == k { print $2; exit }' "$sums_file"
+}
+
+record_sums() {
+  local sums_file="$1"
+  local managed_conf="$2"
+  local launcher_file="$3"
+
+  {
+    printf 'conf %s\n' "$(file_sum "$managed_conf")"
+    printf 'launcher %s\n' "$(file_sum "$launcher_file")"
+  } >"$sums_file"
+}
+
+# True when the file differs from what this installer last wrote, which means
+# the user edited it by hand and we must not silently throw the edit away.
+user_edited() {
+  local key="$1"
+  local path="$2"
+  local sums_file="$3"
+  local recorded current
+
+  recorded="$(recorded_sum "$key" "$sums_file")"
+  [[ -n "$recorded" ]] || return 1
+  [[ -f "$path" ]] || return 1
+  current="$(file_sum "$path")"
+  [[ -n "$current" ]] || return 1
+  [[ "$current" != "$recorded" ]]
+}
+
+write_local_launcher_stub() {
+  local path="$1"
+
+  if [[ -e "$path" ]]; then
+    return 0
+  fi
+
+  cat >"$path" <<'LOCAL_SH'
+# shellcheck shell=sh
+#
+# Personal shell overrides for tmux-setup.
+#
+# launcher.sh sources this file last, and no install or update ever
+# overwrites it. Redefine launcher functions or add your own here.
+#
+# Example: skip the update check on this machine only
+#   NO_TMUX_UPDATE=1
+#
+# Example: your own session shortcut
+#   txdev() { _tmux_launcher_attach_or_create dev; }
+LOCAL_SH
+  chmod 0644 "$path"
+  info "Created personal shell overlay: ${path}"
+}
+
+write_local_tmux_conf_stub() {
+  local path="$1"
+
+  if [[ -e "$path" ]]; then
+    return 0
+  fi
+
+  cat >"$path" <<'LOCAL_TMUX_CONF'
+# Personal tmux settings for tmux-setup.
+#
+# Loaded after personal.tmux.conf, so anything here wins, and no install
+# or update ever overwrites this file.
+#
+# Example: go back to the Ctrl+A prefix
+#   set-option -g prefix C-a
+#   unbind-key C-b
+#   bind-key C-a send-prefix
+LOCAL_TMUX_CONF
+  chmod 0644 "$path"
+  info "Created personal tmux overlay: ${path}"
+}
+
 write_tmux_config() {
   local managed_conf="$1"
   local supports_popup="$2"
@@ -393,9 +499,10 @@ write_launcher_script() {
   cat >"$launcher_file" <<'LAUNCHER_SH'
 # shellcheck shell=sh
 
-_tmux_setup_version="v0.4.1"
+_tmux_setup_version="v0.5.0"
 _tmux_setup_owner="Ba-koD"
 _tmux_setup_repo="tmux-setup"
+_tmux_setup_palette="81,114,213,179,141,80,209,156"
 
 _tmux_launcher_bin_dir="${TMUX_LAUNCHER_BIN_DIR:-$HOME/.local/bin}"
 if [ -d "$_tmux_launcher_bin_dir" ]; then
@@ -409,8 +516,12 @@ _tmux_launcher_mktemp() {
   mktemp "${TMPDIR:-/tmp}/tmux-launcher.XXXXXX" 2>/dev/null || mktemp -t tmux-launcher 2>/dev/null
 }
 
+_tmux_setup_state_dir()    { printf '%s/tmux-setup\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
+_tmux_setup_config_dir()   { printf '%s/tmux\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
+_tmux_setup_launcher_dir() { printf '%s/tmux-launcher\n' "${XDG_CONFIG_HOME:-$HOME/.config}"; }
+
 _tmux_setup_version_file() {
-  printf '%s/tmux-setup/version\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+  printf '%s/version\n' "$(_tmux_setup_state_dir)"
 }
 
 _tmux_setup_installed_version() {
@@ -447,57 +558,147 @@ _tmux_setup_version_gt() {
   '
 }
 
+# ---------------------------------------------------------------------------
+# colors
+# ---------------------------------------------------------------------------
+
+_tmux_setup_use_color() {
+  [ -z "${NO_COLOR:-}" ] || return 1
+  case ${TERM:-} in
+    ""|dumb) return 1 ;;
+  esac
+  return 0
+}
+
+_tmux_setup_say() {
+  case $1 in
+    ok)   _tmx_setup_hue=114 ;;
+    warn) _tmx_setup_hue=179 ;;
+    err)  _tmx_setup_hue=203 ;;
+    *)    _tmx_setup_hue=81 ;;
+  esac
+  if _tmux_setup_use_color; then
+    printf '\033[38;5;%sm%s\033[0m\n' "$_tmx_setup_hue" "$2"
+  else
+    printf '%s\n' "$2"
+  fi
+}
+
+_tmux_launcher_cols() {
+  _tmx_size=$(stty size </dev/tty 2>/dev/null) || _tmx_size=""
+  _tmx_ncols=$(printf '%s' "$_tmx_size" | awk '{print $2 + 0}')
+  case $_tmx_ncols in
+    ''|*[!0-9]*) _tmx_ncols=${COLUMNS:-80} ;;
+  esac
+  case $_tmx_ncols in
+    ''|*[!0-9]*) _tmx_ncols=80 ;;
+  esac
+  [ "$_tmx_ncols" -ge 24 ] 2>/dev/null || _tmx_ncols=80
+  printf '%s\n' "$_tmx_ncols"
+}
+
+# Background-colored spaces only, so terminal character widths never matter.
+_tmux_launcher_rule() {
+  awk -v w="$1" -v pal="$_tmux_setup_palette" -v color="$2" '
+    BEGIN {
+      esc = sprintf("%c", 27)
+      if (color != "1") {
+        s = ""; for (i = 0; i < w; i++) s = s "-"
+        print s
+        exit
+      }
+      n = split(pal, P, ",")
+      out = ""
+      for (i = 1; i <= n; i++) {
+        len = int(w * i / n) - int(w * (i - 1) / n)
+        if (len < 0) len = 0
+        s = ""; for (j = 0; j < len; j++) s = s " "
+        out = out esc "[48;5;" P[i] "m" s
+      }
+      print out esc "[0m"
+    }'
+}
+
+# ---------------------------------------------------------------------------
+# automatic updates
+# ---------------------------------------------------------------------------
+
+_tmux_setup_shell_launcher_wanted() {
+  _tmx_setup_flag="$(_tmux_setup_state_dir)/shell-launcher"
+  [ -f "$_tmx_setup_flag" ] || return 0
+  [ "$(sed -n '1p' "$_tmx_setup_flag" 2>/dev/null)" != "0" ]
+}
+
+_tmux_setup_should_check() {
+  _tmx_setup_interval=${TMUX_SETUP_UPDATE_INTERVAL:-21600}
+  case $_tmx_setup_interval in
+    ''|*[!0-9]*) _tmx_setup_interval=21600 ;;
+  esac
+  [ "$_tmx_setup_interval" -eq 0 ] && return 0
+  _tmx_setup_stamp="$(_tmux_setup_state_dir)/last-update-check"
+  [ -f "$_tmx_setup_stamp" ] || return 0
+  _tmx_setup_then=$(sed -n '1p' "$_tmx_setup_stamp" 2>/dev/null)
+  case $_tmx_setup_then in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  [ $(( $(date +%s) - _tmx_setup_then )) -ge "$_tmx_setup_interval" ]
+}
+
+_tmux_setup_touch_check() {
+  _tmx_setup_dir=$(_tmux_setup_state_dir)
+  mkdir -p "$_tmx_setup_dir" 2>/dev/null || return 0
+  date +%s >"$_tmx_setup_dir/last-update-check" 2>/dev/null || :
+}
+
 _tmux_setup_latest_version() {
-  _tmx_setup_latest=""
+  command -v curl >/dev/null 2>&1 || return 0
+  _tmx_setup_timeout=${TMUX_SETUP_UPDATE_TIMEOUT:-3}
+  case $_tmx_setup_timeout in
+    ''|*[!0-9]*) _tmx_setup_timeout=3 ;;
+  esac
   _tmx_setup_release_url="https://api.github.com/repos/${_tmux_setup_owner}/${_tmux_setup_repo}/releases/latest"
   _tmx_setup_tags_url="https://api.github.com/repos/${_tmux_setup_owner}/${_tmux_setup_repo}/tags"
 
-  if command -v curl >/dev/null 2>&1; then
+  _tmx_setup_latest=$(
+    curl -fsSL --max-time "$_tmx_setup_timeout" -H 'Accept: application/vnd.github+json' \
+      "$_tmx_setup_release_url" 2>/dev/null |
+      sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+  )
+  if [ -z "$_tmx_setup_latest" ]; then
     _tmx_setup_latest=$(
-      curl -fsSL -H 'Accept: application/vnd.github+json' "$_tmx_setup_release_url" 2>/dev/null |
-        sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-        head -n 1
-    ) || _tmx_setup_latest=""
-    if [ -z "$_tmx_setup_latest" ]; then
-      _tmx_setup_latest=$(
-        curl -fsSL -H 'Accept: application/vnd.github+json' "$_tmx_setup_tags_url" 2>/dev/null |
-          sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-          head -n 1
-      ) || _tmx_setup_latest=""
-    fi
+      curl -fsSL --max-time "$_tmx_setup_timeout" -H 'Accept: application/vnd.github+json' \
+        "$_tmx_setup_tags_url" 2>/dev/null |
+        sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+    )
   fi
-
-  printf '%s\n' "${_tmx_setup_latest:-$_tmux_setup_version}"
+  printf '%s\n' "$_tmx_setup_latest"
 }
 
-_tmux_setup_prompt_update() {
-  _tmx_setup_prompt=$1
-  _tmx_setup_answer=""
+# The installer keeps hand-edited config files; see managed.sums there.
+_tmux_setup_run_update() {
+  _tmx_setup_target=$1
+  _tmx_setup_url="https://github.com/${_tmux_setup_owner}/${_tmux_setup_repo}/raw/${_tmx_setup_target}/install.sh"
 
-  if ! { : </dev/tty >/dev/tty; } 2>/dev/null; then
+  if ! command -v curl >/dev/null 2>&1; then
+    _tmux_setup_say err 'tmux-setup update needs curl'
     return 1
   fi
 
-  printf '%s [y/N] ' "$_tmx_setup_prompt" >/dev/tty
-  IFS= read -r _tmx_setup_answer </dev/tty || _tmx_setup_answer=""
+  set -- --skip-package-install --yes --no-update-check
+  _tmux_setup_shell_launcher_wanted || set -- "$@" --no-shell-launcher
 
-  case $_tmx_setup_answer in
-    y|Y|yes|YES) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-_tmux_setup_run_update() {
-  _tmx_setup_latest=$1
-  _tmx_setup_url="https://github.com/${_tmux_setup_owner}/${_tmux_setup_repo}/raw/${_tmx_setup_latest}/install.sh"
-
-  if ! command -v curl >/dev/null 2>&1; then
-    printf 'tmux-setup update requires curl\n'
-    return 0
+  _tmux_setup_say info "Installing tmux-setup ${_tmx_setup_target}..."
+  if ! curl -fsSL --max-time 60 "$_tmx_setup_url" | bash -s -- "$@"; then
+    _tmux_setup_say err 'tmux-setup update failed; keeping the current install'
+    return 1
   fi
 
-  printf 'Updating tmux-setup to %s...\n' "$_tmx_setup_latest"
-  curl -fsSL "$_tmx_setup_url" | bash -s -- --skip-package-install --yes --no-update-check
+  _tmux_setup_say ok "tmux-setup ${_tmx_setup_target} is active"
+
+  # Load the freshly written launcher into this shell.
+  _tmx_setup_new_launcher="$(_tmux_setup_launcher_dir)/launcher.sh"
+  [ -f "$_tmx_setup_new_launcher" ] && . "$_tmx_setup_new_launcher"
+  return 0
 }
 
 _tmux_setup_check_update() {
@@ -509,19 +710,32 @@ _tmux_setup_check_update() {
   _TMUX_SETUP_UPDATE_CHECKED=1
   export _TMUX_SETUP_UPDATE_CHECKED
 
-  _tmx_setup_current=$(_tmux_setup_installed_version)
+  _tmux_setup_should_check || return 0
   _tmx_setup_latest=$(_tmux_setup_latest_version)
+  _tmux_setup_touch_check
+  [ -n "$_tmx_setup_latest" ] || return 0
 
-  if _tmux_setup_version_gt "$_tmx_setup_latest" "$_tmx_setup_current"; then
-    printf 'tmux-setup local: %s\n' "$_tmx_setup_current"
-    printf 'tmux-setup latest: %s\n' "$_tmx_setup_latest"
-    if _tmux_setup_prompt_update "Update tmux-setup to ${_tmx_setup_latest} now?"; then
-      _tmux_setup_run_update "$_tmx_setup_latest"
-    else
-      printf 'tmux-setup update skipped\n'
-    fi
+  _tmx_setup_current=$(_tmux_setup_installed_version)
+  _tmux_setup_version_gt "$_tmx_setup_latest" "$_tmx_setup_current" || return 0
+
+  if _tmux_setup_use_color; then
+    printf '\033[1;38;5;213m tmux-setup \033[0m \033[38;5;245m%s\033[0m \033[38;5;245m->\033[0m \033[1;38;5;114m%s\033[0m\n' \
+      "$_tmx_setup_current" "$_tmx_setup_latest"
+  else
+    printf 'tmux-setup %s -> %s\n' "$_tmx_setup_current" "$_tmx_setup_latest"
   fi
+
+  if [ "${TMUX_SETUP_AUTO_UPDATE:-1}" = "0" ]; then
+    _tmux_setup_say warn 'Automatic update is off; run txu to update.'
+    return 0
+  fi
+
+  _tmux_setup_run_update "$_tmx_setup_latest" || :
 }
+
+# ---------------------------------------------------------------------------
+# session picker
+# ---------------------------------------------------------------------------
 
 _tmux_launcher_in_tmux() {
   [ -n "${TMUX:-}" ]
@@ -540,8 +754,19 @@ _tmux_launcher_sessions() {
   tmux list-sessions -F '#S' 2>/dev/null || true
 }
 
+_tmux_launcher_session_details() {
+  command -v tmux >/dev/null 2>&1 || return 0
+  _tmx_unit=$(printf '\034')
+  tmux list-sessions \
+    -F "#{session_name}${_tmx_unit}#{session_windows} win#{?session_attached, attached,}" 2>/dev/null || true
+}
+
 _tmux_launcher_prompt_name() {
-  printf 'New tmux session name (empty/q to stay in shell): ' >&2
+  if _tmux_setup_use_color; then
+    printf '\033[1;38;5;114m+\033[0m \033[1mNew tmux session name\033[0m \033[38;5;245m(empty or q to stay in the shell)\033[0m\n  \033[38;5;114m>\033[0m ' >&2
+  else
+    printf 'New tmux session name (empty/q to stay in shell): ' >&2
+  fi
   IFS= read -r _tmx_name || return 1
   _tmx_trimmed=$(printf '%s' "$_tmx_name" | awk '{$1=$1; print}')
   case $_tmx_trimmed in
@@ -564,33 +789,174 @@ _tmux_launcher_new_session() {
 _tmux_launcher_keyboard_select() (
   _tmx_sessions=$1
   _tmx_tmp=$(_tmux_launcher_mktemp) || return 1
-  { [ -n "$_tmx_sessions" ] && printf '%s\n' "$_tmx_sessions"; printf '%s\n' '[new session]' '[native shell]'; } >"$_tmx_tmp"
+  _tmx_info=$(_tmux_launcher_mktemp) || { rm -f "$_tmx_tmp"; return 1; }
+  _tmx_unit=$(printf '\034')
+
+  _tmux_launcher_session_details >"$_tmx_info" 2>/dev/null || :
+
+  # kind <TAB> value <TAB> label <TAB> detail
+  {
+    if [ -n "$_tmx_sessions" ]; then
+      printf '%s\n' "$_tmx_sessions" | while IFS= read -r _tmx_row; do
+        [ -n "$_tmx_row" ] || continue
+        _tmx_detail=$(awk -F"$_tmx_unit" -v n="$_tmx_row" '$1 == n { print $2; exit }' "$_tmx_info")
+        printf 's\t%s\t%s\t%s\n' "$_tmx_row" "$_tmx_row" "$_tmx_detail"
+      done
+    fi
+    printf 'n\t[new session]\tnew session\tcreate and attach\n'
+    printf 'q\t[native shell]\tnative shell\tskip tmux this time\n'
+  } >"$_tmx_tmp"
+
   _tmx_count=$(awk 'END { print NR + 0 }' "$_tmx_tmp")
-  _tmx_selected=1; _tmx_escape=$(printf '\033'); _tmx_tty_state=$(stty -g </dev/tty) || { rm -f "$_tmx_tmp"; return 1; }
-  _tmux_launcher_keyboard_cleanup() { stty "$_tmx_tty_state" </dev/tty 2>/dev/null || :; printf '\033[?1049l' >/dev/tty; rm -f "$_tmx_tmp"; }
-  _tmux_launcher_discard_osc() { while :; do _tmx_osc_char=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0; [ -n "$_tmx_osc_char" ] || return 0; [ "$_tmx_osc_char" = "$(printf '\a')" ] && return 0; if [ "$_tmx_osc_char" = "$_tmx_escape" ]; then _tmx_osc_end=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0; [ "$_tmx_osc_end" = '\' ] && return 0; fi; done; }
-  _tmux_launcher_discard_csi() { while :; do _tmx_csi_char=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0; [ -n "$_tmx_csi_char" ] || return 0; case $_tmx_csi_char in [@-~]) return 0 ;; esac; done; }
-  trap '_tmux_launcher_keyboard_cleanup' 0; trap 'exit 130' HUP INT TERM
-  stty -icanon -echo min 1 time 0 </dev/tty; printf '\033[?1049h' >/dev/tty
+  _tmx_selected=1
+  _tmx_escape=$(printf '\033')
+  if _tmux_setup_use_color; then _tmx_color=1; else _tmx_color=0; fi
+  _tmx_version=$(_tmux_setup_installed_version 2>/dev/null || printf '')
+
+  _tmx_tty_state=$(stty -g </dev/tty) || {
+    rm -f "$_tmx_tmp" "$_tmx_info"
+    return 1
+  }
+  _tmux_launcher_keyboard_cleanup() {
+    stty "$_tmx_tty_state" </dev/tty 2>/dev/null || :
+    printf '\033[?25h\033[?1049l' >/dev/tty
+    rm -f "$_tmx_tmp" "$_tmx_info"
+  }
+  _tmux_launcher_discard_osc() {
+    while :; do
+      _tmx_osc_char=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0
+      [ -n "$_tmx_osc_char" ] || return 0
+      [ "$_tmx_osc_char" = "$(printf '\a')" ] && return 0
+      if [ "$_tmx_osc_char" = "$_tmx_escape" ]; then
+        _tmx_osc_end=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0
+        [ "$_tmx_osc_end" = '\' ] && return 0
+      fi
+    done
+  }
+  _tmux_launcher_discard_csi() {
+    while :; do
+      _tmx_csi_char=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || return 0
+      [ -n "$_tmx_csi_char" ] || return 0
+      case $_tmx_csi_char in
+        [@-~]) return 0 ;;
+      esac
+    done
+  }
+  _tmux_launcher_draw() {
+    _tmx_cols=$(_tmux_launcher_cols)
+    _tmx_width=$((_tmx_cols - 4))
+    [ "$_tmx_width" -gt 62 ] && _tmx_width=62
+    [ "$_tmx_width" -lt 24 ] && _tmx_width=24
+
+    printf '\033[H\033[J' >/dev/tty
+    if [ "$_tmx_color" = 1 ]; then
+      printf '\n  \033[1;38;5;81mtmux\033[0m \033[38;5;240m/\033[0m \033[1;38;5;213msession launcher\033[0m   \033[38;5;240m%s\033[0m\n  ' \
+        "$_tmx_version" >/dev/tty
+    else
+      printf '\n  tmux / session launcher   %s\n  ' "$_tmx_version" >/dev/tty
+    fi
+    _tmux_launcher_rule "$_tmx_width" "$_tmx_color" >/dev/tty
+    printf '\n' >/dev/tty
+
+    awk -F'\t' -v W="$_tmx_width" -v sel="$_tmx_selected" -v pal="$_tmux_setup_palette" -v color="$_tmx_color" '
+      BEGIN { esc = sprintf("%c", 27); np = split(pal, P, ","); si = 0 }
+      {
+        kind = $1; label = $3; detail = $4
+        if (kind == "s")      { col = P[(si % np) + 1]; si++ }
+        else if (kind == "n") { col = 114 }
+        else                  { col = 245 }
+
+        mark = (NR == sel) ? " > " : "   "
+        body = mark label
+        fill = W - length(body) - length(detail) - 1
+        if (fill < 1) { detail = ""; fill = W - length(body); if (fill < 1) fill = 1 }
+        sp = ""; for (i = 0; i < fill; i++) sp = sp " "
+
+        if (color != "1") {
+          if (NR == sel) print "  " esc "[7m" body sp detail " " esc "[0m"
+          else           print "  " body sp detail " "
+          next
+        }
+        if (NR == sel)
+          print "  " esc "[1;38;5;16;48;5;" col "m" body sp detail " " esc "[0m"
+        else
+          print "  " esc "[38;5;" col "m" mark esc "[0m" esc "[1;38;5;" col "m" label esc "[0m" \
+                sp esc "[38;5;240m" detail esc "[0m" " "
+      }
+    ' "$_tmx_tmp" >/dev/tty
+
+    printf '\n  ' >/dev/tty
+    _tmux_launcher_rule "$_tmx_width" "$_tmx_color" >/dev/tty
+    if [ "$_tmx_color" = 1 ]; then
+      printf '  \033[38;5;81mup/down\033[0m\033[38;5;240m|\033[0m\033[38;5;81mj/k\033[0m \033[38;5;245mmove\033[0m   \033[38;5;114menter\033[0m \033[38;5;245mselect\033[0m   \033[38;5;179mq\033[0m\033[38;5;240m/\033[0m\033[38;5;179mesc\033[0m \033[38;5;245mnative shell\033[0m\n' >/dev/tty
+    else
+      printf '  up/down or j/k move   enter select   q/esc native shell\n' >/dev/tty
+    fi
+  }
+
+  trap '_tmux_launcher_keyboard_cleanup' 0
+  trap 'exit 130' HUP INT TERM
+  stty -icanon -echo min 1 time 0 </dev/tty
+  printf '\033[?1049h\033[?25l' >/dev/tty
+
   while :; do
-    printf '\033[H\033[Jtmux session\n\n' >/dev/tty
-    awk -v selected="$_tmx_selected" 'BEGIN { esc = sprintf("%c", 27) } NR == selected { printf "%s[7m> %s%s[0m\n", esc, $0, esc; next } { printf "  %s\n", $0 }' "$_tmx_tmp" >/dev/tty
+    _tmux_launcher_draw
+
     _tmx_key=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || exit 1
     case $_tmx_key in
-      "") awk -v n="$_tmx_selected" 'NR == n { print; exit }' "$_tmx_tmp"; exit 0 ;;
-      q|Q) printf '%s\n' '[native shell]'; exit 0 ;;
-      j) [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;;
-      k) [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;;
+      "")
+        awk -F'\t' -v n="$_tmx_selected" 'NR == n { print $2; exit }' "$_tmx_tmp"
+        exit 0
+        ;;
+      q|Q)
+        printf '%s\n' '[native shell]'
+        exit 0
+        ;;
+      j)
+        [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1))
+        ;;
+      k)
+        [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1))
+        ;;
+      g)
+        _tmx_selected=1
+        ;;
+      G)
+        _tmx_selected=$_tmx_count
+        ;;
       "$_tmx_escape")
-        stty min 0 time 2 </dev/tty; _tmx_key_1=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf ''); _tmx_key_2=""; if [ "$_tmx_key_1" = ']' ]; then _tmux_launcher_discard_osc; stty min 1 time 0 </dev/tty; continue; fi; [ "$_tmx_key_1" = '[' ] && _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf ''); if [ "$_tmx_key_1" = '[' ] && [ "$_tmx_key_2" != A ] && [ "$_tmx_key_2" != B ]; then _tmux_launcher_discard_csi; stty min 1 time 0 </dev/tty; continue; fi; stty min 1 time 0 </dev/tty
-        case $_tmx_key_1:$_tmx_key_2 in '[:A') [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;; '[:B') [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;; *) printf '%s\n' '[native shell]'; exit 0 ;; esac ;;
+        stty min 0 time 2 </dev/tty
+        _tmx_key_1=$(dd bs=1 count=1 </dev/tty 2>/dev/null) || _tmx_key_1=""
+        _tmx_key_2=""
+        if [ "$_tmx_key_1" = ']' ]; then
+          _tmux_launcher_discard_osc
+          stty min 1 time 0 </dev/tty
+          continue
+        fi
+        [ "$_tmx_key_1" = '[' ] && _tmx_key_2=$(dd bs=1 count=1 </dev/tty 2>/dev/null || printf '')
+        if [ "$_tmx_key_1" = '[' ] && [ "$_tmx_key_2" != A ] && [ "$_tmx_key_2" != B ]; then
+          _tmux_launcher_discard_csi
+          stty min 1 time 0 </dev/tty
+          continue
+        fi
+        stty min 1 time 0 </dev/tty
+        case $_tmx_key_1:$_tmx_key_2 in
+          '[:A') [ "$_tmx_selected" -gt 1 ] && _tmx_selected=$((_tmx_selected - 1)) ;;
+          '[:B') [ "$_tmx_selected" -lt "$_tmx_count" ] && _tmx_selected=$((_tmx_selected + 1)) ;;
+          *) printf '%s\n' '[native shell]'; exit 0 ;;
+        esac
+        ;;
     esac
   done
 )
 
 _tmux_launcher_keyboard_menu() {
   _tmx_choice=$(_tmux_launcher_keyboard_select "$1") || return 0
-  case $_tmx_choice in ""|"[native shell]") return 0 ;; "[new session]") _tmux_launcher_new_session ;; *) _tmux_launcher_attach_or_create "$_tmx_choice" ;; esac
+  case $_tmx_choice in
+    ""|"[native shell]") return 0 ;;
+    "[new session]") _tmux_launcher_new_session ;;
+    *) _tmux_launcher_attach_or_create "$_tmx_choice" ;;
+  esac
 }
 
 tmux_launcher() {
@@ -607,6 +973,10 @@ tmux_launcher() {
 
   _tmux_launcher_keyboard_menu "$_tmx_sessions"
 }
+
+# ---------------------------------------------------------------------------
+# commands
+# ---------------------------------------------------------------------------
 
 tx() {
   tmux_launcher
@@ -627,6 +997,65 @@ txn() {
   _tmux_launcher_attach_or_create "$_tmx_session"
 }
 
+# Manual update: runs the install.sh published on GitHub.
+txu() {
+  _tmx_setup_current=$(_tmux_setup_installed_version)
+  _tmx_setup_latest=$(TMUX_SETUP_UPDATE_TIMEOUT=10 _tmux_setup_latest_version)
+  if [ -z "$_tmx_setup_latest" ]; then
+    _tmux_setup_say err 'Could not read the GitHub version; check curl and network'
+    return 1
+  fi
+  _tmux_setup_touch_check
+  printf 'local  %s\nlatest %s\n' "$_tmx_setup_current" "$_tmx_setup_latest"
+
+  if _tmux_setup_version_gt "$_tmx_setup_latest" "$_tmx_setup_current"; then
+    _tmux_setup_run_update "$_tmx_setup_latest"
+    return $?
+  fi
+  case ${1:-} in
+    -f|--force)
+      _tmux_setup_say info 'Reinstalling the latest version'
+      _tmux_setup_run_update "$_tmx_setup_latest"
+      return $?
+      ;;
+  esac
+  _tmux_setup_say ok 'Already up to date (force reinstall: txu -f)'
+}
+
+txv() {
+  printf 'tmux-setup %s\n' "$(_tmux_setup_installed_version)"
+  printf 'tmux       %s\n' "$(tmux -V 2>/dev/null || printf 'not installed')"
+  if [ "${TMUX_SETUP_AUTO_UPDATE:-1}" = "0" ]; then
+    printf 'auto update off\n'
+  else
+    printf 'auto update on (every %ss)\n' "${TMUX_SETUP_UPDATE_INTERVAL:-21600}"
+  fi
+  _tmx_setup_sums="$(_tmux_setup_state_dir)/managed.sums"
+  [ -f "$_tmx_setup_sums" ] || return 0
+  _tmux_setup_report_edit conf     "$(_tmux_setup_config_dir)/personal.tmux.conf" \
+    'personal.tmux.conf is edited; updates keep your copy and write personal.tmux.conf.new'
+  _tmux_setup_report_edit launcher "$(_tmux_setup_launcher_dir)/launcher.sh" \
+    'launcher.sh is edited; updates back it up as launcher.sh.bak.<stamp> and replace it (put overrides in local.sh)'
+}
+
+_tmux_setup_report_edit() {
+  _tmx_setup_key=$1
+  _tmx_setup_path=$2
+  _tmx_setup_note=$3
+  _tmx_setup_recorded=$(awk -v k="$_tmx_setup_key" '$1 == k { print $2; exit }' \
+    "$(_tmux_setup_state_dir)/managed.sums" 2>/dev/null)
+  [ -n "$_tmx_setup_recorded" ] || return 0
+  [ -f "$_tmx_setup_path" ] || return 0
+  if command -v shasum >/dev/null 2>&1; then
+    _tmx_setup_now=$(shasum -a 256 "$_tmx_setup_path" 2>/dev/null | awk '{print $1}')
+  elif command -v sha256sum >/dev/null 2>&1; then
+    _tmx_setup_now=$(sha256sum "$_tmx_setup_path" 2>/dev/null | awk '{print $1}')
+  else
+    return 0
+  fi
+  [ "$_tmx_setup_now" = "$_tmx_setup_recorded" ] || _tmux_setup_say warn "$_tmx_setup_note"
+}
+
 codext() {
   if _tmux_launcher_in_tmux; then
     command codex "$@"
@@ -641,6 +1070,14 @@ codext() {
   printf 'Choose or create a tmux session, then run codex inside it.\n'
   tmux_launcher
 }
+
+# ---------------------------------------------------------------------------
+# user overlay: never created or overwritten by an update
+# ---------------------------------------------------------------------------
+
+if [ -f "$(_tmux_setup_launcher_dir)/local.sh" ]; then
+  . "$(_tmux_setup_launcher_dir)/local.sh"
+fi
 LAUNCHER_SH
 }
 
@@ -754,15 +1191,17 @@ install_shell_launcher_blocks() {
   done
 }
 
-remove_managed_block() {
-  local tmux_conf="$1"
+remove_block() {
+  local target="$1"
+  local begin="$2"
+  local end="$3"
   local tmp_file
 
-  [[ -f "$tmux_conf" ]] || return 0
-  grep -Fq "$MARKER_BEGIN" "$tmux_conf" || return 0
+  [[ -f "$target" ]] || return 0
+  grep -Fq "$begin" "$target" || return 0
 
   tmp_file="$(mktemp)"
-  awk -v begin="$MARKER_BEGIN" -v end="$MARKER_END" '
+  awk -v begin="$begin" -v end="$end" '
     $0 == begin {
       skip = 1
       next
@@ -774,34 +1213,85 @@ remove_managed_block() {
     skip != 1 {
       print
     }
-  ' "$tmux_conf" >"$tmp_file"
-  install -m 0644 "$tmp_file" "$tmux_conf"
+  ' "$target" >"$tmp_file"
+  install -m 0644 "$tmp_file" "$target"
   rm -f "$tmp_file"
 }
 
-remove_shell_launcher_block() {
-  local shell_conf="$1"
-  local tmp_file
+# Blocks written by older or hand-rolled installs, so a shell never runs two
+# launchers at once.
+remove_legacy_shell_launcher_blocks() {
+  local shell_conf entry begin end
 
-  [[ -f "$shell_conf" ]] || return 0
-  grep -Fq "$LAUNCHER_MARKER_BEGIN" "$shell_conf" || return 0
+  for shell_conf in "${HOME}/.zshrc" "${HOME}/.bashrc"; do
+    for entry in "${LEGACY_LAUNCHER_MARKERS[@]}"; do
+      begin="${entry%%|*}"
+      end="${entry##*|}"
+      remove_block "$shell_conf" "$begin" "$end"
+    done
+  done
+}
 
+write_local_managed_block() {
+  local tmux_conf="$1"
+  local local_conf="$2"
+  local quiet_source="$3"
+  local block_file tmp_file quoted source_command
+
+  quoted="$(tmux_quote "$local_conf")"
+  if [[ "$quiet_source" -eq 1 ]]; then
+    source_command="source-file -q"
+  else
+    source_command="source-file"
+  fi
+
+  block_file="$(mktemp)"
   tmp_file="$(mktemp)"
-  awk -v begin="$LAUNCHER_MARKER_BEGIN" -v end="$LAUNCHER_MARKER_END" '
-    $0 == begin {
-      skip = 1
-      next
-    }
-    $0 == end {
-      skip = 0
-      next
-    }
-    skip != 1 {
-      print
-    }
-  ' "$shell_conf" >"$tmp_file"
-  install -m 0644 "$tmp_file" "$shell_conf"
-  rm -f "$tmp_file"
+
+  {
+    printf '%s\n' "$LOCAL_MARKER_BEGIN"
+    printf '# Personal settings, loaded last. Updates never touch this block target.\n'
+    printf '%s "%s"\n' "$source_command" "$quoted"
+    printf '%s\n' "$LOCAL_MARKER_END"
+  } >"$block_file"
+
+  if [[ -f "$tmux_conf" ]] && grep -Fq "$LOCAL_MARKER_BEGIN" "$tmux_conf"; then
+    awk -v begin="$LOCAL_MARKER_BEGIN" -v end="$LOCAL_MARKER_END" -v block_file="$block_file" '
+      $0 == begin {
+        while ((getline line < block_file) > 0) {
+          print line
+        }
+        close(block_file)
+        skip = 1
+        next
+      }
+      $0 == end {
+        skip = 0
+        next
+      }
+      skip != 1 {
+        print
+      }
+    ' "$tmux_conf" >"$tmp_file"
+    install -m 0644 "$tmp_file" "$tmux_conf"
+  elif [[ -f "$tmux_conf" ]]; then
+    {
+      printf '\n'
+      cat "$block_file"
+    } >>"$tmux_conf"
+  else
+    install -m 0644 "$block_file" "$tmux_conf"
+  fi
+
+  rm -f "$block_file" "$tmp_file"
+}
+
+remove_managed_block() {
+  remove_block "$1" "$MARKER_BEGIN" "$MARKER_END"
+}
+
+remove_shell_launcher_block() {
+  remove_block "$1" "$LAUNCHER_MARKER_BEGIN" "$LAUNCHER_MARKER_END"
 }
 
 remove_shell_launcher_blocks() {
@@ -817,6 +1307,7 @@ main() {
   local show_version=0
   local uninstall=0
   local config_home state_dir config_dir launcher_dir managed_conf launcher_file version_file tmux_conf installed_version supports_popup default_shell
+  local local_conf local_launcher sums_file shell_flag_file supports_quiet_source launcher_backup config_backup
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -857,6 +1348,10 @@ main() {
   launcher_file="${launcher_dir}/${LAUNCHER_NAME}"
   version_file="${state_dir}/version"
   tmux_conf="${HOME}/.tmux.conf"
+  local_conf="${config_dir}/${LOCAL_CONFIG_NAME}"
+  local_launcher="${launcher_dir}/${LOCAL_LAUNCHER_NAME}"
+  sums_file="${state_dir}/${SUMS_NAME}"
+  shell_flag_file="${state_dir}/${SHELL_FLAG_NAME}"
 
   if [[ "$show_version" -eq 1 ]]; then
     info "tmux-setup local: $(installed_version "$version_file")"
@@ -867,13 +1362,24 @@ main() {
 
   if [[ "$uninstall" -eq 1 ]]; then
     remove_managed_block "$tmux_conf"
+    remove_block "$tmux_conf" "$LOCAL_MARKER_BEGIN" "$LOCAL_MARKER_END"
     remove_shell_launcher_blocks
+    remove_legacy_shell_launcher_blocks
     rm -f "$managed_conf"
+    rm -f "${managed_conf}.new"
     rm -f "$launcher_file"
     rm -f "$version_file"
+    rm -f "$sums_file"
+    rm -f "$shell_flag_file"
+    rm -f "${state_dir}/last-update-check"
     rmdir "$launcher_dir" 2>/dev/null || true
     rmdir "$state_dir" 2>/dev/null || true
     info "Removed managed tmux setup"
+    if [[ -f "$local_conf" || -f "$local_launcher" ]]; then
+      info "Kept your personal overlays:"
+      [[ -f "$local_conf" ]] && info "  ${local_conf}"
+      [[ -f "$local_launcher" ]] && info "  ${local_launcher}"
+    fi
     return
   fi
 
@@ -893,16 +1399,62 @@ main() {
 
   default_shell="$(resolve_default_shell)"
 
+  supports_quiet_source=0
+  if version_at_least "$installed_version" "3.0"; then
+    supports_quiet_source=1
+  fi
+
   install -d -m 0755 "$state_dir"
   install -d -m 0755 "$config_dir"
   install -d -m 0755 "$launcher_dir"
-  write_tmux_config "$managed_conf" "$supports_popup" "$default_shell"
+
+  # Installs from before checksums were recorded cannot be inspected, so keep a
+  # copy of whatever is there before replacing it.
+  if [[ ! -f "$sums_file" && -f "$managed_conf" ]]; then
+    config_backup="${managed_conf}.bak.$(date +%Y%m%d_%H%M%S)"
+    cp -p "$managed_conf" "$config_backup"
+    info "Backed up the previous config to ${config_backup}"
+  fi
+
+  # Never discard a hand-edited managed config: keep the user copy and put the
+  # new defaults next to it instead.
+  if user_edited conf "$managed_conf" "$sums_file"; then
+    write_tmux_config "${managed_conf}.new" "$supports_popup" "$default_shell"
+    if cmp -s "${managed_conf}.new" "$managed_conf"; then
+      rm -f "${managed_conf}.new"
+    else
+      info "Kept your edited ${managed_conf}"
+      info "New defaults written to ${managed_conf}.new"
+      info "Personal settings belong in ${local_conf}; updates never touch it"
+    fi
+  else
+    write_tmux_config "$managed_conf" "$supports_popup" "$default_shell"
+    rm -f "${managed_conf}.new"
+  fi
+
+  if user_edited launcher "$launcher_file" "$sums_file"; then
+    launcher_backup="${launcher_file}.bak.$(date +%Y%m%d_%H%M%S)"
+    cp -p "$launcher_file" "$launcher_backup"
+    info "Backed up your edited launcher.sh to ${launcher_backup}"
+    info "Shell overrides belong in ${local_launcher}; updates never touch it"
+  fi
   write_launcher_script "$launcher_file"
+
+  write_local_launcher_stub "$local_launcher"
+  write_local_tmux_conf_stub "$local_conf"
   write_managed_block "$tmux_conf" "$managed_conf"
+  write_local_managed_block "$tmux_conf" "$local_conf" "$supports_quiet_source"
+
+  # Older and hand-rolled installs left their own launcher blocks behind.
+  remove_legacy_shell_launcher_blocks
   if [[ "$install_shell_launcher" -eq 1 ]]; then
     install_shell_launcher_blocks
+  else
+    remove_shell_launcher_blocks
   fi
+  printf '%s\n' "$install_shell_launcher" >"$shell_flag_file"
   printf '%s\n' "$INSTALLER_VERSION" >"$version_file"
+  record_sums "$sums_file" "$managed_conf" "$launcher_file"
 
   if [[ -n "${TMUX:-}" ]]; then
     tmux source-file "$tmux_conf"
@@ -912,9 +1464,11 @@ main() {
   info "Installed tmux setup version: ${INSTALLER_VERSION}"
   info "Installed tmux config: ${managed_conf}"
   info "Installed tmux launcher: ${launcher_file}"
+  info "Personal overlays: ${local_conf}, ${local_launcher}"
   info "Prefix key: Ctrl+B"
   info "Shell session list: open a new interactive shell, or run tx"
   info "Key bindings screen: Ctrl+B then ?"
+  info "Update: automatic on login, or run txu"
 }
 
 main "$@"

@@ -43,4 +43,30 @@ done
 grep -F 'git clone https://git.intp.me/rudgh/tmux-setup.git' "$ROOT/README.md" >/dev/null || \
   fail 'README must provide a one-command install from git.intp.me'
 
-printf 'PASS: tmux launcher is fzf-free and keyboard driven\n'
+# The launcher ships twice: as a standalone file and inside install.sh.
+diff <(sed -n "/^  cat >\"\$launcher_file\" <<'LAUNCHER_SH'$/,/^LAUNCHER_SH$/p" "$ROOT/install.sh" |
+        sed '1d;$d') "$ROOT/launcher.sh" >/dev/null ||
+  fail 'launcher.sh and the copy inside install.sh drifted apart'
+
+for file in "$ROOT/install.sh" "$ROOT/launcher.sh"; do
+  grep -F '_tmux_setup_check_update' "$file" >/dev/null || fail "login update check missing from $file"
+  grep -F 'TMUX_SETUP_AUTO_UPDATE' "$file" >/dev/null || fail "automatic update switch missing from $file"
+  grep -F 'TMUX_SETUP_UPDATE_INTERVAL' "$file" >/dev/null || fail "update throttling missing from $file"
+  grep -F '48;5;' "$file" >/dev/null || fail "session picker colors missing from $file"
+  grep -F 'NO_COLOR' "$file" >/dev/null || fail "NO_COLOR fallback missing from $file"
+  grep -F 'local.sh' "$file" >/dev/null || fail "personal shell overlay missing from $file"
+done
+
+grep -F 'txu()' "$ROOT/launcher.sh" >/dev/null || fail 'manual update command txu missing'
+grep -F 'install.sh' "$ROOT/launcher.sh" >/dev/null || \
+  fail 'updates must run the install.sh published on GitHub'
+
+for symbol in user_edited record_sums write_local_tmux_conf_stub write_local_launcher_stub \
+  write_local_managed_block remove_legacy_shell_launcher_blocks; do
+  grep -F "$symbol" "$ROOT/install.sh" >/dev/null || fail "installer is missing $symbol"
+done
+
+grep -F 'managed_conf}.new' "$ROOT/install.sh" >/dev/null || \
+  fail 'installer must keep hand-edited configs and write the new defaults alongside'
+
+printf 'PASS: tmux launcher is fzf-free, colored, keyboard driven, and self-updating\n'
