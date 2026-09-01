@@ -52,7 +52,7 @@ for file in "$ROOT/install.sh" "$ROOT/launcher.sh"; do
   grep -F '_tmux_setup_check_update' "$file" >/dev/null || fail "login update check missing from $file"
   grep -F 'TMUX_SETUP_AUTO_UPDATE' "$file" >/dev/null || fail "automatic update switch missing from $file"
   grep -F 'TMUX_SETUP_UPDATE_INTERVAL' "$file" >/dev/null || fail "update throttling missing from $file"
-  grep -F '48;5;' "$file" >/dev/null || fail "session picker colors missing from $file"
+  grep -F '_tmux_setup_use_color' "$file" >/dev/null || fail "session picker colors missing from $file"
   grep -F 'NO_COLOR' "$file" >/dev/null || fail "NO_COLOR fallback missing from $file"
   grep -F 'local.sh' "$file" >/dev/null || fail "personal shell overlay missing from $file"
 done
@@ -68,5 +68,10 @@ done
 
 grep -F 'managed_conf}.new' "$ROOT/install.sh" >/dev/null || \
   fail 'installer must keep hand-edited configs and write the new defaults alongside'
+
+for file in "$ROOT/install.sh" "$ROOT/launcher.sh"; do
+  grep -F '48;5;' "$file" >/dev/null && \
+    fail "session picker must stay on plain text colors, no 256-color fills: $file"
+done
 
 printf 'PASS: tmux launcher is fzf-free, colored, keyboard driven, and self-updating\n'

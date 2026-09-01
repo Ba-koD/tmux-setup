@@ -1,9 +1,8 @@
 # shellcheck shell=sh
 
-_tmux_setup_version="v0.5.0"
+_tmux_setup_version="v0.5.1"
 _tmux_setup_owner="Ba-koD"
 _tmux_setup_repo="tmux-setup"
-_tmux_setup_palette="81,114,213,179,141,80,209,156"
 
 _tmux_launcher_bin_dir="${TMUX_LAUNCHER_BIN_DIR:-$HOME/.local/bin}"
 if [ -d "$_tmux_launcher_bin_dir" ]; then
@@ -73,13 +72,13 @@ _tmux_setup_use_color() {
 
 _tmux_setup_say() {
   case $1 in
-    ok)   _tmx_setup_hue=114 ;;
-    warn) _tmx_setup_hue=179 ;;
-    err)  _tmx_setup_hue=203 ;;
-    *)    _tmx_setup_hue=81 ;;
+    ok)   _tmx_setup_hue=32 ;;
+    warn) _tmx_setup_hue=33 ;;
+    err)  _tmx_setup_hue=31 ;;
+    *)    _tmx_setup_hue=36 ;;
   esac
   if _tmux_setup_use_color; then
-    printf '\033[38;5;%sm%s\033[0m\n' "$_tmx_setup_hue" "$2"
+    printf '\033[%sm%s\033[0m\n' "$_tmx_setup_hue" "$2"
   else
     printf '%s\n' "$2"
   fi
@@ -96,28 +95,6 @@ _tmux_launcher_cols() {
   esac
   [ "$_tmx_ncols" -ge 24 ] 2>/dev/null || _tmx_ncols=80
   printf '%s\n' "$_tmx_ncols"
-}
-
-# Background-colored spaces only, so terminal character widths never matter.
-_tmux_launcher_rule() {
-  awk -v w="$1" -v pal="$_tmux_setup_palette" -v color="$2" '
-    BEGIN {
-      esc = sprintf("%c", 27)
-      if (color != "1") {
-        s = ""; for (i = 0; i < w; i++) s = s "-"
-        print s
-        exit
-      }
-      n = split(pal, P, ",")
-      out = ""
-      for (i = 1; i <= n; i++) {
-        len = int(w * i / n) - int(w * (i - 1) / n)
-        if (len < 0) len = 0
-        s = ""; for (j = 0; j < len; j++) s = s " "
-        out = out esc "[48;5;" P[i] "m" s
-      }
-      print out esc "[0m"
-    }'
 }
 
 # ---------------------------------------------------------------------------
@@ -220,7 +197,7 @@ _tmux_setup_check_update() {
   _tmux_setup_version_gt "$_tmx_setup_latest" "$_tmx_setup_current" || return 0
 
   if _tmux_setup_use_color; then
-    printf '\033[1;38;5;213m tmux-setup \033[0m \033[38;5;245m%s\033[0m \033[38;5;245m->\033[0m \033[1;38;5;114m%s\033[0m\n' \
+    printf '\033[1mtmux-setup\033[0m \033[90m%s -> \033[0m\033[1;36m%s\033[0m\n' \
       "$_tmx_setup_current" "$_tmx_setup_latest"
   else
     printf 'tmux-setup %s -> %s\n' "$_tmx_setup_current" "$_tmx_setup_latest"
@@ -264,7 +241,7 @@ _tmux_launcher_session_details() {
 
 _tmux_launcher_prompt_name() {
   if _tmux_setup_use_color; then
-    printf '\033[1;38;5;114m+\033[0m \033[1mNew tmux session name\033[0m \033[38;5;245m(empty or q to stay in the shell)\033[0m\n  \033[38;5;114m>\033[0m ' >&2
+    printf '\033[1mNew tmux session name\033[0m \033[90m(empty or q to stay in the shell)\033[0m\n  \033[32m>\033[0m ' >&2
   else
     printf 'New tmux session name (empty/q to stay in shell): ' >&2
   fi
@@ -351,21 +328,18 @@ _tmux_launcher_keyboard_select() (
 
     printf '\033[H\033[J' >/dev/tty
     if [ "$_tmx_color" = 1 ]; then
-      printf '\n  \033[1;38;5;81mtmux\033[0m \033[38;5;240m/\033[0m \033[1;38;5;213msession launcher\033[0m   \033[38;5;240m%s\033[0m\n  ' \
-        "$_tmx_version" >/dev/tty
+      printf '\n  \033[1mtmux session\033[0m \033[90m%s\033[0m\n\n' "$_tmx_version" >/dev/tty
     else
-      printf '\n  tmux / session launcher   %s\n  ' "$_tmx_version" >/dev/tty
+      printf '\n  tmux session %s\n\n' "$_tmx_version" >/dev/tty
     fi
-    _tmux_launcher_rule "$_tmx_width" "$_tmx_color" >/dev/tty
-    printf '\n' >/dev/tty
 
-    awk -F'\t' -v W="$_tmx_width" -v sel="$_tmx_selected" -v pal="$_tmux_setup_palette" -v color="$_tmx_color" '
-      BEGIN { esc = sprintf("%c", 27); np = split(pal, P, ","); si = 0 }
+    awk -F'\t' -v W="$_tmx_width" -v sel="$_tmx_selected" -v color="$_tmx_color" '
+      BEGIN { esc = sprintf("%c", 27) }
       {
         kind = $1; label = $3; detail = $4
-        if (kind == "s")      { col = P[(si % np) + 1]; si++ }
-        else if (kind == "n") { col = 114 }
-        else                  { col = 245 }
+        if (kind == "s")      { dim = "36"; lit = "1;96" }
+        else if (kind == "n") { dim = "32"; lit = "1;92" }
+        else                  { dim = "90"; lit = "1;93" }
 
         mark = (NR == sel) ? " > " : "   "
         body = mark label
@@ -378,20 +352,15 @@ _tmux_launcher_keyboard_select() (
           else           print "  " body sp detail " "
           next
         }
-        if (NR == sel)
-          print "  " esc "[1;38;5;16;48;5;" col "m" body sp detail " " esc "[0m"
-        else
-          print "  " esc "[38;5;" col "m" mark esc "[0m" esc "[1;38;5;" col "m" label esc "[0m" \
-                sp esc "[38;5;240m" detail esc "[0m" " "
+        col = (NR == sel) ? lit : dim
+        print "  " esc "[" col "m" body esc "[0m" sp esc "[90m" detail esc "[0m" " "
       }
     ' "$_tmx_tmp" >/dev/tty
 
-    printf '\n  ' >/dev/tty
-    _tmux_launcher_rule "$_tmx_width" "$_tmx_color" >/dev/tty
     if [ "$_tmx_color" = 1 ]; then
-      printf '  \033[38;5;81mup/down\033[0m\033[38;5;240m|\033[0m\033[38;5;81mj/k\033[0m \033[38;5;245mmove\033[0m   \033[38;5;114menter\033[0m \033[38;5;245mselect\033[0m   \033[38;5;179mq\033[0m\033[38;5;240m/\033[0m\033[38;5;179mesc\033[0m \033[38;5;245mnative shell\033[0m\n' >/dev/tty
+      printf '\n  \033[90mup/down or j/k move   enter select   q/esc native shell\033[0m\n' >/dev/tty
     else
-      printf '  up/down or j/k move   enter select   q/esc native shell\n' >/dev/tty
+      printf '\n  up/down or j/k move   enter select   q/esc native shell\n' >/dev/tty
     fi
   }
 
