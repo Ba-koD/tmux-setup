@@ -109,8 +109,10 @@ jobs:
           <title>tmux-setup</title>
           <meta name="description" content="tmux-setup: an interactive tmux session picker and an opinionated tmux config, installed by a single script.">
           <style>
-            :root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--pre:#f4f4f5;--bd:#e4e4e7;--acc:#0969da}
-            @media(prefers-color-scheme:dark){:root{--bg:#18181b;--fg:#e4e4e7;--mut:#a1a1aa;--pre:#27272a;--bd:#3f3f46;--acc:#79c0ff}}
+            :root{--bg:#fff;--fg:#1a1a1a;--mut:#666;--pre:#f6f8fa;--bd:#d8dade;--acc:#0969da;
+                  --cmd:#0550ae;--flag:#953800;--str:#0a3069;--cmt:#6e7781;--btn:#fff}
+            @media(prefers-color-scheme:dark){:root{--bg:#18181b;--fg:#e4e4e7;--mut:#a1a1aa;--pre:#1f1f23;
+                  --bd:#3f3f46;--acc:#79c0ff;--cmd:#79c0ff;--flag:#ffa657;--str:#a5d6ff;--cmt:#8b949e;--btn:#27272a}}
             *{box-sizing:border-box}
             body{background:var(--bg);color:var(--fg);font:16px/1.65 ui-sans-serif,system-ui,sans-serif;
                  max-width:46rem;margin:0 auto;padding:3rem 1.25rem 4rem}
@@ -118,11 +120,21 @@ jobs:
             h2{font-size:1.25rem;margin:2.75rem 0 .75rem;padding-top:.85rem;border-top:1px solid var(--bd)}
             h3{font-size:1rem;margin:1.75rem 0 .5rem;color:var(--mut);font-weight:600}
             pre{background:var(--pre);border:1px solid var(--bd);border-radius:8px;
-                padding:1rem;overflow-x:auto;font-size:.8125rem;line-height:1.55}
-            code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+                padding:1rem;overflow-x:auto;font-size:.8125rem;line-height:1.6;margin:0}
+            code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
             p code,li code,td code,th code{background:var(--pre);border:1px solid var(--bd);
                 border-radius:4px;padding:.05rem .3rem;font-size:.85em}
             pre code{background:none;border:0;padding:0;font-size:inherit}
+            .cb{position:relative;margin:0 0 1rem}
+            .cb button{position:absolute;top:.5rem;right:.5rem;font:inherit;font-size:.75rem;
+                color:var(--mut);background:var(--btn);border:1px solid var(--bd);border-radius:6px;
+                padding:.15rem .5rem;cursor:pointer;opacity:0;transition:opacity .12s}
+            .cb:hover button,.cb button:focus{opacity:1}
+            .cb button:hover{color:var(--fg)}
+            .tok-cmd{color:var(--cmd);font-weight:600}
+            .tok-flag{color:var(--flag)}
+            .tok-str{color:var(--str)}
+            .tok-cmt{color:var(--cmt);font-style:italic}
             p.mut,li.mut,.mut{color:var(--mut)}
             a{color:var(--acc)}
             ul{padding-left:1.25rem}
@@ -152,7 +164,7 @@ jobs:
             <li>Your own settings live in overlay files that installs and updates never touch.</li>
           </ul>
 
-          <pre><code>  tmux session v__VERSION__
+          <pre class="plain"><code>  tmux session v__VERSION__
 
                work                                      3 win attached
              &gt; dotfiles                                          1 win
@@ -163,9 +175,11 @@ jobs:
 
           <h2>Install</h2>
           <pre><code>curl -fsSL https://github.com/__REPO__/raw/main/install.sh | bash</code></pre>
-          <p class="mut">The installer prints the local, latest, and bundled versions on
+          <p class="mut"><code>install.sh</code> is self-contained: it carries the launcher
+          and the tmux config inside itself, so there is nothing to clone or download
+          alongside it. The installer prints the local, latest, and bundled versions on
           every run, then asks whether to install, update, or reinstall. In a
-          non-interactive shell it takes the default answer and continues. It installs
+          non-interactive shell it takes the default answer and continues, and it installs
           tmux through your package manager if it is missing.</p>
 
           <h3>Variations</h3>
@@ -186,7 +200,7 @@ jobs:
           <code>--uninstall</code> removes everything it added.</p>
 
           <h3>What it writes</h3>
-          <pre><code>~/.config/tmux-setup/version
+          <pre class="plain"><code>~/.config/tmux-setup/version
           ~/.config/tmux-setup/managed.sums
           ~/.config/tmux-setup/shell-launcher
           ~/.config/tmux/personal.tmux.conf
@@ -236,7 +250,7 @@ jobs:
           generated, and every update rewrites them. Put your own settings in the two
           overlay files instead &mdash; the installer creates them once, loads them last,
           and never touches them again.</p>
-          <pre><code>~/.config/tmux/local.tmux.conf     # tmux settings, sourced after the defaults
+          <pre class="plain"><code>~/.config/tmux/local.tmux.conf     # tmux settings, sourced after the defaults
           ~/.config/tmux-launcher/local.sh   # shell functions, sourced after the launcher</code></pre>
           <pre><code># ~/.config/tmux/local.tmux.conf
           set-option -g prefix C-a
@@ -273,6 +287,71 @@ jobs:
           <a href="https://github.com/__REPO__/releases">Releases</a> &middot;
           <a href="https://github.com/__REPO__/releases/latest">Latest release</a>
           </footer>
+
+          <script>
+          // Shell highlighting and a copy button, built from textContent so nothing can
+          // be injected back into the DOM as markup.
+          (function () {
+            var CMDS = /^(curl|bash|sh|git|sudo|apt|apt-get|tmux|tx|txl|txn|txu|txv|codext|echo|cat|cd|cp|mv|rm|mkdir|install|tee|sha256sum|set-option|unbind-key|bind-key|source-file|set|setw)$/;
+
+            function esc(s) {
+              return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            function span(cls, s) { return '<span class="' + cls + '">' + esc(s) + '</span>'; }
+
+            function line(src) {
+              if (/^\s*#/.test(src)) return span('tok-cmt', src);
+
+              var code = src, tail = '';
+              var hash = src.search(/\s#\s/);
+              if (hash > -1) { code = src.slice(0, hash); tail = src.slice(hash); }
+
+              var out = '', first = true;
+              // keep whitespace, pipes and separators intact; style only real tokens
+              code.split(/(\s+|\||&&|;)/).forEach(function (t) {
+                if (!t) return;
+                if (/^(\s+|\||&&|;)$/.test(t)) { out += esc(t); if (/[|&;]/.test(t)) first = true; return; }
+                if (first && CMDS.test(t)) { out += span('tok-cmd', t); first = false; return; }
+                first = false;
+                if (/^--?[A-Za-z]/.test(t)) { out += span('tok-flag', t); return; }
+                if (/^https?:\/\//.test(t)) { out += span('tok-str', t); return; }
+                out += esc(t);
+              });
+              return out + (tail ? span('tok-cmt', tail) : '');
+            }
+
+            document.querySelectorAll('pre > code').forEach(function (el) {
+              var pre = el.parentNode, raw = el.textContent;
+
+              if (!pre.classList.contains('plain')) {
+                el.innerHTML = raw.split('\n').map(line).join('\n');
+              }
+
+              var wrap = document.createElement('div');
+              wrap.className = 'cb';
+              pre.parentNode.insertBefore(wrap, pre);
+              wrap.appendChild(pre);
+
+              if (pre.classList.contains('plain')) return;
+
+              var btn = document.createElement('button');
+              btn.type = 'button';
+              btn.textContent = 'Copy';
+              btn.setAttribute('aria-label', 'Copy code');
+              btn.addEventListener('click', function () {
+                navigator.clipboard.writeText(raw).then(function () {
+                  btn.textContent = 'Copied';
+                  setTimeout(function () { btn.textContent = 'Copy'; }, 1200);
+                }, function () {
+                  btn.textContent = 'Press Ctrl+C';
+                  setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+                });
+              });
+              wrap.appendChild(btn);
+            });
+          })();
+          </script>
 
           </body></html>
           HTML
